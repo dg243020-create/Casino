@@ -8,7 +8,7 @@
   // ==== Firebase 初期化 ====
   // からあげ屋レジと同じ方式: Firebase Realtime Database の URL をここに設定してください。
   // 例: "https://your-project-id-default-rtdb.asia-southeast1.firebasedatabase.app"
-  const FIREBASE_DB_URL = "https://casino-3d0ee-default-rtdb.asia-southeast1.firebasedatabase.app";
+  const FIREBASE_DB_URL = "https://YOUR-PROJECT-default-rtdb.firebaseio.com";
   const FIREBASE_CONFIG = {
     databaseURL: FIREBASE_DB_URL
   };
@@ -465,7 +465,8 @@ function render(data){
   const seatsEl = document.getElementById("seats");
   seatsEl.innerHTML = "";
   const order = data.turnOrder || [];
-  const currentTurnPid = order[data.currentTurnIndex];
+  const playOrder = data.playOrder || [];
+  const currentTurnPid = playOrder[data.currentTurnIndex];
   order.forEach(pid=>{
     const p = data.players[pid];
     if(!p) return;
@@ -473,7 +474,8 @@ function render(data){
     seat.className = "seat" + (pid===myId ? " me":"") + (pid===currentTurnPid && (data.phase==="playing") ? " turn":"");
     const total = handValue(p.hand||[]);
     let statusText = "";
-    if(data.phase==="betting") statusText = p.bet>0 ? `ベット ${p.bet}` : "ベット待ち";
+    if(data.phase==="betting") statusText = p.chips===0 ? "観戦中(チップ切れ)" : (p.bet>0 ? `ベット ${p.bet}` : "ベット待ち");
+    else if(p.status==="watching") statusText = "観戦中";
     else if(p.status==="bust") statusText = `バスト (${total})`;
     else if(p.status==="blackjack") statusText = "ブラックジャック!";
     else if(p.status==="stand") statusText = `スタンド (${total})`;
@@ -519,6 +521,10 @@ function renderActions(data){
   if(!me) return;
 
   if(data.phase === "betting"){
+    if(me.chips===0){
+      msgEl.textContent = "チップが0のため今ラウンドは観戦です。ホストがラウンドを開始すると他の人だけで進みます。";
+      return;
+    }
     if(me.bet>0){
       msgEl.textContent = "他のプレイヤーのベットを待っています…";
       return;
@@ -560,8 +566,12 @@ function renderActions(data){
   }
 
   if(data.phase === "playing"){
-    const order = data.turnOrder || [];
-    const currentTurnPid = order[data.currentTurnIndex];
+    const playOrder = data.playOrder || [];
+    const currentTurnPid = playOrder[data.currentTurnIndex];
+    if(me.status==="watching"){
+      msgEl.textContent = "このラウンドは観戦中です…";
+      return;
+    }
     if(currentTurnPid !== myId){
       msgEl.textContent = `${(data.players[currentTurnPid]||{}).name || "相手"} の番です…`;
       return;
@@ -591,7 +601,11 @@ function renderActions(data){
   }
 
   if(data.phase === "results"){
-    msgEl.textContent = me.result ? `結果: ${me.result}` : "";
+    if(me.status==="watching"){
+      msgEl.textContent = "このラウンドは観戦でした。";
+    } else {
+      msgEl.textContent = me.result ? `結果: ${me.result}` : "";
+    }
     if(isHost){
       msgEl.textContent += "  次のラウンドはホストが開始できます。";
     }
@@ -605,25 +619,39 @@ async function checkAllBetsIn(){
     if(!data || data.phase!=="betting") return data;
     const players = data.players || {};
     const order = data.turnOrder || Object.keys(players);
-    const allIn = order.every(pid => players[pid] && players[pid].bet>0);
-    if(!allIn) return data;
+    // チップ0の人は「観戦」扱いでベット不要。それ以外は全員ベット済みである必要がある。
+    const allReady = order.every(pid => players[pid] && (players[pid].chips===0 || players[pid].bet>0));
+    const activeOrder = order.filter(pid => players[pid] && players[pid].bet>0);
+    if(!allReady || activeOrder.length===0) return data;
 
     // ディール開始
     let deck = data.deck && data.deck.length>30 ? data.deck : newShuffledDeck();
-    order.forEach(pid=>{ players[pid].hand = []; players[pid].status="playing"; players[pid].result=null; players[pid].splitHand=null; players[pid].splitStatus=null; });
+    order.forEach(pid=>{
+      const p = players[pid];
+      p.hand = []; p.result=null; p.splitHand=null; p.splitStatus=null;
+      p.status = p.bet>0 ? "playing" : "watching";
+    });
     let dealerHand = [];
     for(let round=0; round<2; round++){
-      order.forEach(pid=>{ players[pid].hand.push(deck.pop()); });
+      activeOrder.forEach(pid=>{ players[pid].hand.push(deck.pop()); });
       dealerHand.push(deck.pop());
     }
-    order.forEach(pid=>{
+    activeOrder.forEach(pid=>{
       if(isBlackjack(players[pid].hand)){ players[pid].status="blackjack"; }
     });
     data.players = players;
     data.deck = deck;
     data.dealer = { hand: dealerHand, revealed:false };
-    data.phase = "playing";
-    data.currentTurnIndex = firstPlayableIndex(order, players, 0);
+    data.playOrder = activeOrder;
+    const idx = firstPlayableIndex(activeOrder, players, 0);
+    if(idx >= activeOrder.length){
+      // 全員がブラックジャック(または誰もプレイ可能でない)→ そのままディーラーへ
+      data.phase = "dealer";
+      data.currentTurnIndex = 0;
+    } else {
+      data.phase = "playing";
+      data.currentTurnIndex = idx;
+    }
     return data;
   });
 }
@@ -638,7 +666,7 @@ function firstPlayableIndex(order, players, from){
 async function playerAction(action){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
-    const order = data.turnOrder || [];
+    const order = data.playOrder || [];
     const pid = order[data.currentTurnIndex];
     if(pid !== myId) return data; // 自分の番じゃなければ何もしない
     const p = data.players[pid];
@@ -724,6 +752,8 @@ document.getElementById("start-round-btn").addEventListener("click", async ()=>{
     });
     data.dealer = { hand: [], revealed:false };
     data.phase = "betting";
+    data.playOrder = null;
+    data.currentTurnIndex = 0;
     if(!data.deck || data.deck.length < 20) data.deck = newShuffledDeck();
     return data;
   });
