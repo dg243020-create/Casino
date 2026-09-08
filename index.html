@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ブラックジャック・テーブル</title>
+<script type="module">
+  // ==== Firebase 初期化 ====
+  // からあげ屋レジと同じ方式: Firebase Realtime Database の URL をここに設定してください。
+  // 例: "https://your-project-id-default-rtdb.asia-southeast1.firebasedatabase.app"
+  const FIREBASE_DB_URL = "https://casino-3d0ee-default-rtdb.asia-southeast1.firebasedatabase.app";
+  const FIREBASE_CONFIG = {
+    databaseURL: FIREBASE_DB_URL
+  };
+
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getDatabase, ref, set, get, onValue, runTransaction, onDisconnect, update
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  const app = initializeApp(FIREBASE_CONFIG);
+  const db = getDatabase(app);
+  window.__fb = { ref, set, get, onValue, runTransaction, onDisconnect, update, db };
+</script>
+<style>
+  :root{
+    --felt-dark:#0b3d2e;
+    --felt:#0f4f3c;
+    --felt-light:#166049;
+    --rim:#3a2517;
+    --rim-dark:#241609;
+    --gold:#c9a227;
+    --gold-bright:#e8c766;
+    --cream:#f0ead6;
+    --cream-dim:#cfc6a8;
+    --red:#a33b3b;
+    --ink:#1b120a;
+    --card-face:#fbf7ec;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family: "Georgia", "Hiragino Mincho ProN", serif;
+    background: radial-gradient(ellipse at center, #12140f 0%, #060705 75%);
+    color:var(--cream);
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+  .brand{
+    font-family: "Playfair Display", Georgia, serif;
+    letter-spacing:.04em;
+  }
+
+  /* ---- 画面切り替え ---- */
+  .screen{ width:100%; display:none; flex-direction:column; align-items:center; }
+  .screen.active{ display:flex; }
+
+  /* ---- ロビー画面 ---- */
+  #lobby{ justify-content:center; min-height:100vh; padding:24px; }
+  .lobby-card{
+    width:min(420px,92vw);
+    background:linear-gradient(180deg,#151915,#0d100d);
+    border:1px solid #2a2f27;
+    border-radius:4px;
+    padding:36px 28px;
+    box-shadow:0 20px 60px rgba(0,0,0,.6);
+  }
+  .lobby-card h1{
+    font-size:1.9rem; margin:0 0 4px; color:var(--gold-bright); font-weight:600;
+  }
+  .lobby-card p.sub{ margin:0 0 28px; color:var(--cream-dim); font-size:.92rem; font-family:sans-serif; }
+  label{ display:block; font-size:.78rem; color:var(--cream-dim); margin-bottom:6px; font-family:sans-serif; letter-spacing:.02em;}
+  input[type=text]{
+    width:100%; padding:11px 12px; margin-bottom:18px;
+    background:#0a0c0a; border:1px solid #333a30; border-radius:2px;
+    color:var(--cream); font-size:1rem; font-family:sans-serif;
+  }
+  input[type=text]:focus{ outline:none; border-color:var(--gold); }
+  .btn{
+    display:inline-block; width:100%; padding:12px 16px; margin-top:6px;
+    background:var(--gold); color:var(--ink); border:none; border-radius:2px;
+    font-family:sans-serif; font-weight:700; font-size:.95rem; letter-spacing:.02em;
+    cursor:pointer; transition:filter .15s;
+  }
+  .btn:hover{ filter:brightness(1.08); }
+  .btn:disabled{ filter:grayscale(.6) brightness(.7); cursor:not-allowed; }
+  .btn.ghost{
+    background:transparent; color:var(--cream); border:1px solid #3a4038;
+  }
+  .btn.small{ width:auto; padding:8px 14px; font-size:.82rem; }
+  .divider{ text-align:center; color:#555; font-size:.75rem; margin:22px 0; font-family:sans-serif; }
+  .err{ color:#e08a8a; font-size:.82rem; margin-top:-8px; margin-bottom:14px; font-family:sans-serif; min-height:1em; }
+
+  /* ---- テーブル画面 ---- */
+  #table-screen{ min-height:100vh; padding:14px 10px 130px; }
+  .topbar{
+    width:100%; max-width:980px; display:flex; justify-content:space-between; align-items:center;
+    font-family:sans-serif; font-size:.78rem; color:var(--cream-dim); padding:4px 10px 14px;
+  }
+  .topbar .room-code{ color:var(--gold-bright); letter-spacing:.08em; font-weight:700; }
+  .table-wrap{
+    width:100%; max-width:980px; aspect-ratio:16/10; position:relative;
+    background:
+      radial-gradient(ellipse at center, var(--felt-light) 0%, var(--felt) 55%, var(--felt-dark) 100%);
+    border-radius:50%/38%;
+    border:14px solid var(--rim);
+    outline:3px solid var(--rim-dark);
+    box-shadow: inset 0 0 60px rgba(0,0,0,.55), 0 25px 50px rgba(0,0,0,.5);
+  }
+  .table-wrap::before{
+    content:"BLACKJACK PAYS 3 TO 2";
+    position:absolute; top:12%; left:50%; transform:translateX(-50%);
+    font-family:"Playfair Display",Georgia,serif; font-size:.85rem; letter-spacing:.15em;
+    color:rgba(232,199,102,.35);
+  }
+
+  .dealer-zone{
+    position:absolute; top:20%; left:50%; transform:translateX(-50%);
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+  }
+  .zone-label{ font-family:sans-serif; font-size:.68rem; letter-spacing:.12em; color:var(--cream-dim); }
+  .cards{ display:flex; gap:-14px; }
+  .card{
+    width:44px; height:62px; border-radius:5px; background:var(--card-face);
+    box-shadow:0 3px 6px rgba(0,0,0,.4);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-family:Georgia,serif; font-weight:700; font-size:1.05rem;
+    margin-left:-16px; border:1px solid #d8d0b8;
+  }
+  .card:first-child{ margin-left:0; }
+  .card.red{ color:var(--red); }
+  .card.black{ color:#161616; }
+  .card.back{
+    background:repeating-linear-gradient(45deg,#7a1f1f,#7a1f1f 4px,#5c1616 4px,#5c1616 8px);
+    border:2px solid var(--gold);
+  }
+  .hand-total{ font-family:sans-serif; font-size:.75rem; color:var(--gold-bright); margin-top:2px; }
+
+  .seats{
+    position:absolute; bottom:6%; left:50%; transform:translateX(-50%);
+    display:flex; gap:22px; flex-wrap:wrap; justify-content:center; width:88%;
+  }
+  .seat{
+    background:rgba(0,0,0,.28); border:1px solid rgba(232,199,102,.18); border-radius:8px;
+    padding:8px 12px; min-width:118px; display:flex; flex-direction:column; align-items:center;
+    gap:4px; position:relative;
+  }
+  .seat.me{ border-color:var(--gold); box-shadow:0 0 0 1px var(--gold); }
+  .seat.turn{ box-shadow:0 0 0 2px var(--gold-bright), 0 0 18px rgba(232,199,102,.5); }
+  .seat .pname{ font-family:sans-serif; font-size:.78rem; color:var(--cream); font-weight:700; }
+  .seat .chips{ font-family:sans-serif; font-size:.7rem; color:var(--gold-bright); }
+  .seat .status{ font-family:sans-serif; font-size:.66rem; color:var(--cream-dim); min-height:1em; }
+  .seat .subhand{ opacity:.85; margin-top:2px; padding-top:4px; border-top:1px dashed rgba(255,255,255,.15); }
+
+  .empty-seat{
+    border:1px dashed rgba(255,255,255,.2); border-radius:8px; padding:8px 16px;
+    font-family:sans-serif; font-size:.75rem; color:#777; min-width:118px; text-align:center;
+  }
+
+  /* ---- アクションバー ---- */
+  .actionbar{
+    position:fixed; bottom:0; left:0; right:0; padding:14px 12px calc(14px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg, rgba(10,12,10,0), rgba(6,7,6,.96) 30%);
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+  }
+  .actionbar .msg{ font-family:sans-serif; font-size:.85rem; color:var(--cream-dim); text-align:center; min-height:1.2em;}
+  .actions{ display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .actions .btn{ width:auto; min-width:96px; padding:11px 18px; }
+  .bet-row{ display:flex; gap:8px; align-items:center; }
+  .chip-btn{
+    width:52px; height:52px; border-radius:50%; border:2px solid var(--gold);
+    background:radial-gradient(circle at 35% 30%, #2a2a2a, #111 70%);
+    color:var(--gold-bright); font-family:sans-serif; font-weight:700; font-size:.78rem;
+    cursor:pointer;
+  }
+  .chip-btn:hover{ filter:brightness(1.2); }
+  .bet-display{ font-family:sans-serif; font-size:1rem; color:var(--gold-bright); min-width:80px; text-align:center; }
+
+  .host-only{ display:none; }
+  .toast{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:#161916; border:1px solid var(--gold); color:var(--cream);
+    padding:8px 16px; border-radius:4px; font-family:sans-serif; font-size:.82rem;
+    z-index:50; opacity:0; pointer-events:none; transition:opacity .3s;
+  }
+  .toast.show{ opacity:1; }
+
+  @media (max-width:600px){
+    .table-wrap{ border-radius:26px; aspect-ratio:auto; min-height:480px; }
+    .table-wrap::before{ font-size:.6rem; top:8%; }
+    .dealer-zone{ top:14%; }
+    .seats{ bottom:4%; gap:12px; }
+    .seat{ min-width:92px; padding:6px 8px; }
+    .card{ width:36px; height:50px; font-size:.85rem; margin-left:-14px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="toast" id="toast"></div>
+
+<!-- ==== ロビー画面 ==== -->
+<div class="screen active" id="lobby">
+  <div class="lobby-card">
+    <h1 class="brand">Blackjack Table</h1>
+    <p class="sub">友達とリアルタイムでブラックジャック。名前を入れて部屋を作るか、コードで参加してね。</p>
+
+    <label for="name-input">プレイヤー名</label>
+    <input type="text" id="name-input" maxlength="10" placeholder="例: たろう">
+    <div class="err" id="name-err"></div>
+
+    <button class="btn" id="create-room-btn">新しい部屋を作る</button>
+
+    <div class="divider">または</div>
+
+    <label for="room-input">部屋コード</label>
+    <input type="text" id="room-input" maxlength="6" placeholder="例: A1B2C3" style="text-transform:uppercase;">
+    <div class="err" id="join-err"></div>
+    <button class="btn ghost" id="join-room-btn">部屋に参加する</button>
+  </div>
+</div>
+
+<!-- ==== テーブル画面 ==== -->
+<div class="screen" id="table-screen">
+  <div class="topbar">
+    <div>部屋コード: <span class="room-code" id="room-code-label">------</span></div>
+    <div id="phase-label">待機中</div>
+    <button class="btn small ghost" id="leave-btn">退室</button>
+  </div>
+
+  <div class="table-wrap">
+    <div class="dealer-zone">
+      <div class="zone-label">DEALER</div>
+      <div class="cards" id="dealer-cards"></div>
+      <div class="hand-total" id="dealer-total"></div>
+    </div>
+    <div class="seats" id="seats"></div>
+  </div>
+
+  <div class="actionbar">
+    <div class="msg" id="action-msg"></div>
+    <div class="actions" id="actions"></div>
+    <button class="btn small host-only" id="start-round-btn">ラウンド開始(ホスト)</button>
+  </div>
+</div>
+
+<script type="module">
+import { ref, set, get, onValue, runTransaction, onDisconnect, update } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+const { db } = window.__fb;
+
+/* ================= ユーティリティ ================= */
+const SUITS = ["S","H","D","C"];
+const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const SUIT_SYMBOL = { S:"♠", H:"♥", D:"♦", C:"♣" };
+
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+
+function newShuffledDeck(numDecks=4){
+  const deck = [];
+  for(let d=0; d<numDecks; d++){
+    for(const s of SUITS) for(const r of RANKS) deck.push(r+s);
+  }
+  for(let i=deck.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [deck[i],deck[j]] = [deck[j],deck[i]];
+  }
+  return deck;
+}
+
+function handValue(cards){
+  let total=0, aces=0;
+  for(const c of cards){
+    const rank = c.slice(0,-1);
+    if(rank==="A"){ total+=11; aces++; }
+    else if(["J","Q","K"].includes(rank)) total+=10;
+    else total+=parseInt(rank,10);
+  }
+  while(total>21 && aces>0){ total-=10; aces--; }
+  return total;
+}
+function isBlackjack(cards){ return cards.length===2 && handValue(cards)===21; }
+
+function genRoomCode(){
+  const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s=""; for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+function genId(){ return "p_"+Math.random().toString(36).slice(2,10); }
+
+/* ================= ローカル状態 ================= */
+let myId = localStorage.getItem("bj_player_id");
+if(!myId){ myId = genId(); localStorage.setItem("bj_player_id", myId); }
+
+let myName = localStorage.getItem("bj_player_name") || "";
+let currentRoom = null;
+let unsub = null;
+let isHost = false;
+
+/* ================= 画面切り替え ================= */
+function showScreen(id){
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+/* ================= ロビー ================= */
+const nameInput = document.getElementById("name-input");
+nameInput.value = myName;
+
+document.getElementById("create-room-btn").addEventListener("click", async ()=>{
+  const name = nameInput.value.trim();
+  if(!name){ document.getElementById("name-err").textContent="名前を入力してね"; return; }
+  document.getElementById("name-err").textContent="";
+  myName = name; localStorage.setItem("bj_player_name", myName);
+
+  const roomId = genRoomCode();
+  const roomRef = ref(db, `rooms/${roomId}`);
+  const initialState = {
+    hostId: myId,
+    phase: "betting",
+    deck: newShuffledDeck(),
+    dealer: { hand: [], revealed:false },
+    turnOrder: [myId],
+    currentTurnIndex: 0,
+    createdAt: Date.now(),
+    players: {
+      [myId]: { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat: 0 }
+    }
+  };
+  await set(roomRef, initialState);
+  enterRoom(roomId);
+});
+
+document.getElementById("join-room-btn").addEventListener("click", async ()=>{
+  const name = nameInput.value.trim();
+  const roomId = document.getElementById("room-input").value.trim().toUpperCase();
+  if(!name){ document.getElementById("name-err").textContent="名前を入力してね"; return; }
+  if(!roomId){ document.getElementById("join-err").textContent="部屋コードを入力してね"; return; }
+  document.getElementById("name-err").textContent="";
+  document.getElementById("join-err").textContent="";
+  myName = name; localStorage.setItem("bj_player_name", myName);
+
+  const roomRef = ref(db, `rooms/${roomId}`);
+  const snap = await get(roomRef);
+  if(!snap.exists()){
+    document.getElementById("join-err").textContent="その部屋は見つからなかった";
+    return;
+  }
+  const roomData = snap.val();
+  if(!roomData.players[myId]){
+    // 新規参加者として追加(空いている席番号を割り当て)
+    const seatNums = Object.values(roomData.players).map(p=>p.seat);
+    let seat = 0; while(seatNums.includes(seat)) seat++;
+    if(seatNums.length >= 5){
+      document.getElementById("join-err").textContent="満席(最大5人)です";
+      return;
+    }
+    await update(ref(db, `rooms/${roomId}/players/${myId}`), {
+      name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat
+    });
+    await runTransaction(ref(db, `rooms/${roomId}/turnOrder`), (order)=>{
+      order = order || [];
+      if(!order.includes(myId)) order.push(myId);
+      return order;
+    });
+  }
+  enterRoom(roomId);
+});
+
+function enterRoom(roomId){
+  currentRoom = roomId;
+  localStorage.setItem("bj_last_room", roomId);
+  document.getElementById("room-code-label").textContent = roomId;
+  showScreen("table-screen");
+
+  const roomRef = ref(db, `rooms/${roomId}`);
+  onDisconnect(ref(db, `rooms/${roomId}/players/${myId}/online`)).set(false);
+  set(ref(db, `rooms/${roomId}/players/${myId}/online`), true);
+
+  if(unsub) unsub();
+  unsub = onValue(roomRef, (snap)=>{
+    const data = snap.val();
+    if(!data){ toast("部屋が閉じられました"); showScreen("lobby"); return; }
+    isHost = data.hostId === myId;
+    render(data);
+    maybeAdvanceDealer(data);
+  });
+}
+
+document.getElementById("leave-btn").addEventListener("click", ()=>{
+  if(unsub) unsub();
+  currentRoom = null;
+  showScreen("lobby");
+});
+
+/* ================= 自動復帰 ================= */
+window.addEventListener("load", ()=>{
+  const lastRoom = localStorage.getItem("bj_last_room");
+  if(lastRoom && myName){
+    get(ref(db, `rooms/${lastRoom}/players/${myId}`)).then(snap=>{
+      if(snap.exists()) enterRoom(lastRoom);
+    });
+  }
+});
+
+/* ================= 描画 ================= */
+function cardEl(code, hidden=false){
+  const el = document.createElement("div");
+  if(hidden){ el.className="card back"; return el; }
+  const rank = code.slice(0,-1), suit = code.slice(-1);
+  el.className = "card " + (["H","D"].includes(suit) ? "red":"black");
+  el.innerHTML = `${rank}<span style="font-size:1.1em">${SUIT_SYMBOL[suit]}</span>`;
+  return el;
+}
+
+function render(data){
+  document.getElementById("phase-label").textContent = {
+    betting:"ベット中", dealing:"配布中", playing:"プレイ中", dealer:"ディーラー",
+    results:"結果発表"
+  }[data.phase] || data.phase;
+
+  // ディーラー
+  const dCards = document.getElementById("dealer-cards");
+  dCards.innerHTML = "";
+  const dHand = (data.dealer && data.dealer.hand) || [];
+  dHand.forEach((c,i)=>{
+    const hide = !data.dealer.revealed && i===1 && (data.phase==="playing"||data.phase==="dealing");
+    dCards.appendChild(cardEl(c, hide));
+  });
+  const dTotalEl = document.getElementById("dealer-total");
+  if(data.dealer && data.dealer.revealed){
+    dTotalEl.textContent = handValue(dHand) + (handValue(dHand)>21 ? " バスト":"");
+  } else if(dHand.length){
+    dTotalEl.textContent = "?";
+  } else dTotalEl.textContent = "";
+
+  // 座席
+  const seatsEl = document.getElementById("seats");
+  seatsEl.innerHTML = "";
+  const order = data.turnOrder || [];
+  const currentTurnPid = order[data.currentTurnIndex];
+  order.forEach(pid=>{
+    const p = data.players[pid];
+    if(!p) return;
+    const seat = document.createElement("div");
+    seat.className = "seat" + (pid===myId ? " me":"") + (pid===currentTurnPid && (data.phase==="playing") ? " turn":"");
+    const total = handValue(p.hand||[]);
+    let statusText = "";
+    if(data.phase==="betting") statusText = p.bet>0 ? `ベット ${p.bet}` : "ベット待ち";
+    else if(p.status==="bust") statusText = `バスト (${total})`;
+    else if(p.status==="blackjack") statusText = "ブラックジャック!";
+    else if(p.status==="stand") statusText = `スタンド (${total})`;
+    else if(p.status==="playing") statusText = `手札 ${total}`;
+    else if(p.result) statusText = p.result;
+
+    seat.innerHTML = `
+      <div class="pname">${p.name}${pid===myId ? " (自分)":""}</div>
+      <div class="cards" style="transform:scale(.62);margin:-6px 0;">${(p.hand||[]).map(c=>{
+          const rank=c.slice(0,-1), suit=c.slice(-1);
+          return `<div class="card ${["H","D"].includes(suit)?"red":"black"}">${rank}${SUIT_SYMBOL[suit]}</div>`;
+        }).join("")}</div>
+      <div class="status">${statusText}</div>
+      <div class="chips">${p.chips} chips</div>
+    `;
+    if(p.splitHand){
+      const sub = document.createElement("div");
+      sub.className = "status subhand";
+      sub.textContent = `2ndハンド: ${handValue(p.splitHand)} (${p.splitStatus||""})`;
+      seat.appendChild(sub);
+    }
+    seatsEl.appendChild(seat);
+  });
+
+  // ホスト用ラウンド開始ボタン
+  const startBtn = document.getElementById("start-round-btn");
+  if(isHost && data.phase==="results"){
+    startBtn.style.display = "inline-block";
+  } else {
+    startBtn.style.display = "none";
+  }
+
+  renderActions(data);
+}
+
+function renderActions(data){
+  const actionsEl = document.getElementById("actions");
+  const msgEl = document.getElementById("action-msg");
+  actionsEl.innerHTML = "";
+  msgEl.textContent = "";
+
+  const me = data.players[myId];
+  if(!me) return;
+
+  if(data.phase === "betting"){
+    if(me.bet>0){
+      msgEl.textContent = "他のプレイヤーのベットを待っています…";
+      return;
+    }
+    let bet = 0;
+    const row = document.createElement("div");
+    row.className = "bet-row";
+    const disp = document.createElement("div");
+    disp.className = "bet-display";
+    disp.textContent = "0 chips";
+    [10,50,100,500].forEach(v=>{
+      const b = document.createElement("button");
+      b.className = "chip-btn"; b.textContent = "+"+v;
+      b.onclick = ()=>{ bet = Math.min(bet+v, me.chips); disp.textContent = bet+" chips"; };
+      row.appendChild(b);
+    });
+    actionsEl.appendChild(row);
+    actionsEl.appendChild(disp);
+    const confirmRow = document.createElement("div");
+    confirmRow.className = "actions";
+    const okBtn = document.createElement("button");
+    okBtn.className = "btn small"; okBtn.textContent = "ベット確定";
+    okBtn.onclick = async ()=>{
+      if(bet<=0){ toast("チップを選んでね"); return; }
+      await update(ref(db, `rooms/${currentRoom}/players/${myId}`), { bet });
+      checkAllBetsIn();
+    };
+    confirmRow.appendChild(okBtn);
+    actionsEl.appendChild(confirmRow);
+    return;
+  }
+
+  if(data.phase === "playing"){
+    const order = data.turnOrder || [];
+    const currentTurnPid = order[data.currentTurnIndex];
+    if(currentTurnPid !== myId){
+      msgEl.textContent = `${(data.players[currentTurnPid]||{}).name || "相手"} の番です…`;
+      return;
+    }
+    if(me.status !== "playing"){
+      msgEl.textContent = "結果を待っています…";
+      return;
+    }
+    msgEl.textContent = "あなたの番です";
+    const mk = (label, fn, disabled=false)=>{
+      const b = document.createElement("button");
+      b.className = "btn small"; b.textContent = label; b.disabled = disabled;
+      b.onclick = fn; return b;
+    };
+    actionsEl.appendChild(mk("ヒット", ()=>playerAction("hit")));
+    actionsEl.appendChild(mk("スタンド", ()=>playerAction("stand")));
+    const canDouble = me.hand.length===2 && me.chips>=me.bet;
+    actionsEl.appendChild(mk("ダブルダウン", ()=>playerAction("double"), !canDouble));
+    const canSplit = me.hand.length===2 && me.hand[0].slice(0,-1)===me.hand[1].slice(0,-1) && me.chips>=me.bet && !me.splitHand;
+    actionsEl.appendChild(mk("スプリット", ()=>playerAction("split"), !canSplit));
+    return;
+  }
+
+  if(data.phase === "dealer"){
+    msgEl.textContent = "ディーラーがプレイ中…";
+    return;
+  }
+
+  if(data.phase === "results"){
+    msgEl.textContent = me.result ? `結果: ${me.result}` : "";
+    if(isHost){
+      msgEl.textContent += "  次のラウンドはホストが開始できます。";
+    }
+  }
+}
+
+/* ================= ゲームロジック(トランザクションで実行) ================= */
+
+async function checkAllBetsIn(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="betting") return data;
+    const players = data.players || {};
+    const order = data.turnOrder || Object.keys(players);
+    const allIn = order.every(pid => players[pid] && players[pid].bet>0);
+    if(!allIn) return data;
+
+    // ディール開始
+    let deck = data.deck && data.deck.length>30 ? data.deck : newShuffledDeck();
+    order.forEach(pid=>{ players[pid].hand = []; players[pid].status="playing"; players[pid].result=null; players[pid].splitHand=null; players[pid].splitStatus=null; });
+    let dealerHand = [];
+    for(let round=0; round<2; round++){
+      order.forEach(pid=>{ players[pid].hand.push(deck.pop()); });
+      dealerHand.push(deck.pop());
+    }
+    order.forEach(pid=>{
+      if(isBlackjack(players[pid].hand)){ players[pid].status="blackjack"; }
+    });
+    data.players = players;
+    data.deck = deck;
+    data.dealer = { hand: dealerHand, revealed:false };
+    data.phase = "playing";
+    data.currentTurnIndex = firstPlayableIndex(order, players, 0);
+    return data;
+  });
+}
+
+function firstPlayableIndex(order, players, from){
+  for(let i=from;i<order.length;i++){
+    if(players[order[i]].status==="playing") return i;
+  }
+  return order.length; // 誰もプレイできない → ディーラーへ
+}
+
+async function playerAction(action){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing") return data;
+    const order = data.turnOrder || [];
+    const pid = order[data.currentTurnIndex];
+    if(pid !== myId) return data; // 自分の番じゃなければ何もしない
+    const p = data.players[pid];
+    if(!p || p.status!=="playing") return data;
+    let deck = data.deck;
+
+    if(action==="hit"){
+      p.hand.push(deck.pop());
+      const v = handValue(p.hand);
+      if(v>21) p.status="bust";
+      else if(v===21) { p.status="stand"; }
+    } else if(action==="stand"){
+      p.status="stand";
+    } else if(action==="double"){
+      p.chips -= p.bet; p.bet *= 2;
+      p.hand.push(deck.pop());
+      const v = handValue(p.hand);
+      p.status = v>21 ? "bust" : "stand";
+    } else if(action==="split"){
+      p.chips -= p.bet;
+      p.splitHand = [p.hand.pop()];
+      p.splitHand.push(deck.pop());
+      p.hand.push(deck.pop());
+      p.splitStatus = "playing";
+    }
+
+    // 次のターンへ進める(現プレイヤーがまだアクティブでなければ)
+    if(p.status!=="playing"){
+      data.currentTurnIndex = firstPlayableIndex(order, data.players, data.currentTurnIndex+1);
+      if(data.currentTurnIndex >= order.length){
+        data.phase = "dealer";
+      }
+    }
+    data.deck = deck;
+    return data;
+  });
+}
+
+/* ディーラーの自動プレイ: 全クライアントが試みるが、トランザクションの冪等性で安全 */
+let dealerTimer = null;
+function maybeAdvanceDealer(data){
+  if(data.phase !== "dealer"){ return; }
+  clearTimeout(dealerTimer);
+  dealerTimer = setTimeout(async ()=>{
+    await runTransaction(ref(db, `rooms/${currentRoom}`), (d)=>{
+      if(!d || d.phase!=="dealer") return d;
+      d.dealer.revealed = true;
+      const val = handValue(d.dealer.hand);
+      if(val < 17){
+        d.dealer.hand.push(d.deck.pop());
+      } else {
+        // 精算
+        const dv = handValue(d.dealer.hand);
+        const dBust = dv>21;
+        Object.values(d.players).forEach(p=>{
+          const settle = (hand, betAmt)=>{
+            if(!hand || hand.length===0) return null;
+            const pv = handValue(hand);
+            if(pv>21) { p.chips -= 0; return "負け(バスト)"; }
+            if(isBlackjack(hand) && !p.splitHand){
+              p.chips += Math.floor(betAmt*2.5); return "ブラックジャック勝ち!";
+            }
+            if(dBust || pv>dv){ p.chips += betAmt*2; return "勝ち"; }
+            if(pv===dv){ p.chips += betAmt; return "引き分け"; }
+            return "負け";
+          };
+          p.result = settle(p.hand, p.bet);
+          if(p.splitHand) p.splitStatus = settle(p.splitHand, p.bet);
+          p.bet = 0;
+        });
+        d.phase = "results";
+      }
+      return d;
+    });
+  }, 900);
+}
+
+document.getElementById("start-round-btn").addEventListener("click", async ()=>{
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data) return data;
+    Object.values(data.players).forEach(p=>{
+      p.bet=0; p.hand=[]; p.status="betting"; p.result=null; p.splitHand=null; p.splitStatus=null;
+    });
+    data.dealer = { hand: [], revealed:false };
+    data.phase = "betting";
+    if(!data.deck || data.deck.length < 20) data.deck = newShuffledDeck();
+    return data;
+  });
+});
+</script>
+</body>
+</html>
