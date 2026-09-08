@@ -456,7 +456,7 @@ function render(data){
   });
   const dTotalEl = document.getElementById("dealer-total");
   if(data.dealer && data.dealer.revealed){
-    dTotalEl.textContent = handValue(dHand) + (handValue(dHand)>21 ? " バスト":"");
+    dTotalEl.textContent = handValue(dHand) + (handValue(dHand)>21 ? " バースト":"");
   } else if(dHand.length){
     dTotalEl.textContent = "?";
   } else dTotalEl.textContent = "";
@@ -476,7 +476,7 @@ function render(data){
     let statusText = "";
     if(data.phase==="betting") statusText = p.chips===0 ? "観戦中(チップ切れ)" : (p.bet>0 ? `ベット ${p.bet}` : "ベット待ち");
     else if(p.status==="watching") statusText = "観戦中";
-    else if(p.status==="bust") statusText = `バスト (${total})`;
+    else if(p.status==="bust") statusText = `バースト (${total})`;
     else if(p.status==="blackjack") statusText = "ブラックジャック!";
     else if(p.status==="stand") statusText = `スタンド (${total})`;
     else if(p.status==="playing") statusText = `手札 ${total}`;
@@ -557,7 +557,13 @@ function renderActions(data){
     okBtn.className = "btn small"; okBtn.textContent = "ベット確定";
     okBtn.onclick = async ()=>{
       if(bet<=0){ toast("チップを選んでね"); return; }
-      await update(ref(db, `rooms/${currentRoom}/players/${myId}`), { bet });
+      await runTransaction(ref(db, `rooms/${currentRoom}/players/${myId}`), (p)=>{
+        if(!p || p.bet>0) return p; // 既にベット済みなら何もしない(二重送信防止)
+        const actualBet = Math.min(bet, p.chips);
+        p.bet = actualBet;
+        p.chips -= actualBet;
+        return p;
+      });
       checkAllBetsIn();
     };
     confirmRow.appendChild(okBtn);
@@ -725,7 +731,7 @@ function maybeAdvanceDealer(data){
           const settle = (hand, betAmt)=>{
             if(!hand || hand.length===0) return null;
             const pv = handValue(hand);
-            if(pv>21) { p.chips -= 0; return "負け(バスト)"; }
+            if(pv>21) { p.chips -= 0; return "負け(バースト)"; }
             if(isBlackjack(hand) && !p.splitHand){
               p.chips += Math.floor(betAmt*2.5); return "ブラックジャック勝ち!";
             }
