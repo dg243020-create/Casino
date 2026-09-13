@@ -80,6 +80,20 @@
     vertical-align:middle;
   }
 
+  /* ---- 部屋一覧 ---- */
+  .room-list-item{
+    display:flex; justify-content:space-between; align-items:center;
+    background:#0f120f; border:1px solid #2a2f27; border-radius:5px;
+    padding:12px 14px; margin-bottom:10px; cursor:pointer; transition:border-color .15s;
+  }
+  .room-list-item:hover{ border-color:var(--gold); }
+  .room-list-item .rli-name{ font-family:sans-serif; font-weight:700; color:var(--cream); font-size:.92rem; }
+  .room-list-item .rli-sub{ font-family:sans-serif; font-size:.72rem; color:var(--cream-dim); margin-top:2px; }
+  .room-list-item .rli-game-tag{
+    font-family:sans-serif; font-size:.68rem; padding:2px 9px; border-radius:10px;
+    background:rgba(232,199,102,.15); color:var(--gold-bright); white-space:nowrap; margin-left:10px;
+  }
+
   /* ---- ロビー画面 ---- */
   #lobby{ justify-content:center; min-height:100vh; padding:24px; }
   .lobby-card{
@@ -294,6 +308,25 @@
       <div class="gtitle">ババ抜き</div>
       <div class="gdesc">2〜8人でジョーカーを避けあう定番トランプゲーム。まずは部屋作成から。</div>
     </div>
+    <button class="back-link" id="open-room-list-btn" style="margin-top:6px;">部屋を探す(今開いている部屋の一覧)→</button>
+  </div>
+</div>
+
+<!-- ==== 部屋一覧画面 ==== -->
+<div class="screen" id="room-list">
+  <div class="lobby-card" style="width:min(560px,92vw);">
+    <button class="back-link" id="room-list-back-btn">← ゲーム選択に戻る</button>
+    <h1 class="brand">部屋を探す</h1>
+    <p class="sub">今開いている部屋の一覧だよ。名前を入れてから、参加したい部屋をタップしてね。</p>
+
+    <label for="rl-name-input">プレイヤー名</label>
+    <input type="text" id="rl-name-input" maxlength="10" placeholder="例: たろう">
+    <div class="err" id="rl-name-err"></div>
+
+    <div id="room-list-items" style="margin-top:8px;"></div>
+    <div id="room-list-empty" style="display:none;color:var(--cream-dim);font-family:sans-serif;font-size:.85rem;text-align:center;padding:18px 0;">
+      今開いている部屋はまだないみたい。ゲームを選んで新しく部屋を作ってみて!
+    </div>
   </div>
 </div>
 
@@ -307,6 +340,9 @@
     <label for="name-input">プレイヤー名</label>
     <input type="text" id="name-input" maxlength="10" placeholder="例: たろう">
     <div class="err" id="name-err"></div>
+
+    <label for="room-name-input">部屋名(省略可)</label>
+    <input type="text" id="room-name-input" maxlength="16" placeholder="例: 土曜の集まり">
 
     <button class="btn" id="create-room-btn">新しい部屋を作る</button>
 
@@ -322,6 +358,7 @@
 <!-- ==== テーブル画面 ==== -->
 <div class="screen table-screen" id="table-screen">
   <div class="topbar">
+    <div id="room-name-label" style="color:var(--cream);font-weight:700;"></div>
     <div>部屋コード: <span class="room-code" id="room-code-label">------</span></div>
     <div id="round-label"></div>
     <div id="phase-label">待機中</div>
@@ -347,6 +384,7 @@
 <!-- ==== ババ抜き・テーブル画面 ==== -->
 <div class="screen table-screen" id="babanuki-table">
   <div class="topbar">
+    <div id="bk-room-name-label" style="color:var(--cream);font-weight:700;"></div>
     <div>部屋コード: <span class="room-code" id="bk-room-code-label">------</span></div>
     <div>プレイヤー <span id="bk-player-count">0</span>/8</div>
     <button class="btn small ghost" id="bk-leave-btn">退室</button>
@@ -456,6 +494,103 @@ document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
   showScreen("game-select");
 });
 
+/* ================= 部屋一覧 ================= */
+const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き" };
+let unsubRoomList = null;
+const rlNameInput = document.getElementById("rl-name-input");
+
+document.getElementById("open-room-list-btn").addEventListener("click", ()=>{
+  rlNameInput.value = myName;
+  document.getElementById("rl-name-err").textContent = "";
+  showScreen("room-list");
+  subscribeRoomList();
+});
+
+document.getElementById("room-list-back-btn").addEventListener("click", ()=>{
+  if(unsubRoomList){ unsubRoomList(); unsubRoomList = null; }
+  showScreen("game-select");
+});
+
+function subscribeRoomList(){
+  if(unsubRoomList){ unsubRoomList(); unsubRoomList = null; }
+  const roomsRef = ref(db, "rooms");
+  unsubRoomList = onValue(roomsRef, (snap)=>{
+    renderRoomList(snap.val() || {});
+  });
+}
+
+function renderRoomList(roomsData){
+  const listEl = document.getElementById("room-list-items");
+  const emptyEl = document.getElementById("room-list-empty");
+  listEl.innerHTML = "";
+
+  const entries = Object.entries(roomsData).filter(([, room])=> room && room.players);
+  if(entries.length===0){
+    emptyEl.style.display = "block";
+    return;
+  }
+  emptyEl.style.display = "none";
+
+  entries
+    .sort((a,b)=> (b[1].createdAt||0) - (a[1].createdAt||0))
+    .forEach(([roomId, room])=>{
+      const players = room.players || {};
+      const playerCount = Object.keys(players).length;
+      const host = players[room.hostId];
+      const hostName = host ? host.name : "?";
+      const roomName = room.roomName || `${hostName}の部屋`;
+      const gameLabel = GAME_LABELS[room.game] || room.game || "?";
+      const maxSeats = room.game === "babanuki" ? 8 : 5;
+
+      const item = document.createElement("div");
+      item.className = "room-list-item";
+      item.innerHTML = `
+        <div>
+          <div class="rli-name">${roomName}</div>
+          <div class="rli-sub">作成者: ${hostName} ・ 人数 ${playerCount}/${maxSeats} ・ コード ${roomId}</div>
+        </div>
+        <div class="rli-game-tag">${gameLabel}</div>
+      `;
+      item.addEventListener("click", ()=> joinRoomFromList(roomId, room));
+      listEl.appendChild(item);
+    });
+}
+
+async function joinRoomFromList(roomId, roomDataHint){
+  const name = rlNameInput.value.trim();
+  if(!name){ document.getElementById("rl-name-err").textContent = "名前を入力してね"; return; }
+  document.getElementById("rl-name-err").textContent = "";
+  myName = name; localStorage.setItem("bj_player_name", myName);
+
+  const roomRef = ref(db, `rooms/${roomId}`);
+  const snap = await get(roomRef);
+  if(!snap.exists()){
+    toast("その部屋はもう無いみたい");
+    return;
+  }
+  const roomData = snap.val();
+  if(!roomData.players[myId]){
+    const seatNums = Object.values(roomData.players).map(p=>p.seat);
+    let seat = 0; while(seatNums.includes(seat)) seat++;
+    const maxSeats = roomData.game === "babanuki" ? 8 : 5;
+    if(seatNums.length >= maxSeats){
+      toast(`満席(最大${maxSeats}人)です`);
+      return;
+    }
+    const newPlayer = roomData.game === "babanuki"
+      ? { name: myName, seat, hand: [], cleared: false, online: true }
+      : { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat, debt: 0 };
+    await update(ref(db, `rooms/${roomId}/players/${myId}`), newPlayer);
+    await runTransaction(ref(db, `rooms/${roomId}/turnOrder`), (order)=>{
+      order = order || [];
+      if(!order.includes(myId)) order.push(myId);
+      return order;
+    });
+  }
+  if(unsubRoomList){ unsubRoomList(); unsubRoomList = null; }
+  enterRoom(roomId);
+}
+
 /* ================= ロビー ================= */
 const nameInput = document.getElementById("name-input");
 nameInput.value = myName;
@@ -466,12 +601,16 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
   document.getElementById("name-err").textContent="";
   myName = name; localStorage.setItem("bj_player_name", myName);
 
+  const roomNameRaw = document.getElementById("room-name-input").value.trim();
+  const roomName = roomNameRaw || `${myName}の部屋`;
+
   const roomId = genRoomCode();
   const roomRef = ref(db, `rooms/${roomId}`);
   let initialState;
   if(selectedGame === "babanuki"){
     initialState = {
       game: "babanuki",
+      roomName: roomName,
       hostId: myId,
       phase: "waiting",
       createdAt: Date.now(),
@@ -483,6 +622,7 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
   } else {
     initialState = {
       game: "blackjack",
+      roomName: roomName,
       hostId: myId,
       phase: "betting",
       deck: newShuffledDeck(),
@@ -557,10 +697,12 @@ function enterRoom(roomId){
     isHost = data.hostId === myId;
     if(data.game === "babanuki"){
       document.getElementById("bk-room-code-label").textContent = roomId;
+      document.getElementById("bk-room-name-label").textContent = data.roomName || "";
       showScreen("babanuki-table");
       bkRender(data);
     } else {
       document.getElementById("room-code-label").textContent = roomId;
+      document.getElementById("room-name-label").textContent = data.roomName || "";
       showScreen("table-screen");
       render(data);
       maybeAdvanceDealer(data);
