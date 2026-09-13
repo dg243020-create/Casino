@@ -1151,6 +1151,7 @@ async function bkDrawCard(cardIndex){
 document.getElementById("bk-start-btn").addEventListener("click", ()=>{ bkStartGame(); });
 
 // ペアが捨てられた時のちょっとした演出(捨てられた実際のカードを表示)
+// 前の表示がまだ残っていても、新しいペアが成立した瞬間に即座に切り替える
 function bkAnnouncePair(evt){
   const t = document.getElementById("toast");
   const cardsHtml = evt.cards.map(c=>{
@@ -1159,9 +1160,13 @@ function bkAnnouncePair(evt){
     const color = ["H","D"].includes(suit) ? "#ff8a8a" : "#eee";
     return `<span style="display:inline-block;background:#0a0c0a;border:1px solid ${color};color:${color};border-radius:3px;padding:1px 6px;margin:0 2px;font-weight:800;">${rank}${SUIT_SYMBOL[suit]||""}</span>`;
   }).join("");
+
+  clearTimeout(toast._t);
+  // 表示中でも一度リセットしてから中身を差し替えることで、前の表示が残っていても確実に切り替わるようにする
+  t.classList.remove("show");
+  void t.offsetWidth; // 強制リフロー
   t.innerHTML = `🂠 <b>${evt.name}</b> さんが ${cardsHtml} のペアを捨てた!`;
   t.classList.add("show");
-  clearTimeout(toast._t);
   toast._t = setTimeout(()=>t.classList.remove("show"), 2800);
 }
 
