@@ -15,12 +15,12 @@
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
-    getDatabase, ref, set, get, onValue, runTransaction, onDisconnect, update
+    getDatabase, ref, set, get, onValue, runTransaction, onDisconnect, update, remove
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   const app = initializeApp(FIREBASE_CONFIG);
   const db = getDatabase(app);
-  window.__fb = { ref, set, get, onValue, runTransaction, onDisconnect, update, db };
+  window.__fb = { ref, set, get, onValue, runTransaction, onDisconnect, update, remove, db };
 </script>
 <style>
   :root{
@@ -83,15 +83,15 @@
   /* ---- 部屋一覧 ---- */
   .room-list-item{
     display:flex; justify-content:space-between; align-items:center;
-    background:#0f120f; border:1px solid #2a2f27; border-radius:5px;
-    padding:12px 14px; margin-bottom:10px; cursor:pointer; transition:border-color .15s;
+    background:#0f120f; border:1px solid #2a2f27; border-radius:8px;
+    padding:18px 22px; margin-bottom:14px; cursor:pointer; transition:border-color .15s;
   }
   .room-list-item:hover{ border-color:var(--gold); }
-  .room-list-item .rli-name{ font-family:sans-serif; font-weight:700; color:var(--cream); font-size:.92rem; }
-  .room-list-item .rli-sub{ font-family:sans-serif; font-size:.72rem; color:var(--cream-dim); margin-top:2px; }
+  .room-list-item .rli-name{ font-family:sans-serif; font-weight:700; color:var(--cream); font-size:1.2rem; }
+  .room-list-item .rli-sub{ font-family:sans-serif; font-size:.9rem; color:var(--cream-dim); margin-top:6px; }
   .room-list-item .rli-game-tag{
-    font-family:sans-serif; font-size:.68rem; padding:2px 9px; border-radius:10px;
-    background:rgba(232,199,102,.15); color:var(--gold-bright); white-space:nowrap; margin-left:10px;
+    font-family:sans-serif; font-size:.85rem; padding:5px 14px; border-radius:14px;
+    background:rgba(232,199,102,.15); color:var(--gold-bright); white-space:nowrap; margin-left:16px;
   }
 
   /* ---- ロビー画面 ---- */
@@ -314,7 +314,7 @@
 
 <!-- ==== 部屋一覧画面 ==== -->
 <div class="screen" id="room-list">
-  <div class="lobby-card" style="width:min(560px,92vw);">
+  <div class="lobby-card" style="width:min(680px,94vw);">
     <button class="back-link" id="room-list-back-btn">← ゲーム選択に戻る</button>
     <h1 class="brand">部屋を探す</h1>
     <p class="sub">今開いている部屋の一覧だよ。名前を入れてから、参加したい部屋をタップしてね。</p>
@@ -407,7 +407,7 @@
 </div>
 
 <script type="module">
-import { ref, set, get, onValue, runTransaction, onDisconnect, update } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { ref, set, get, onValue, runTransaction, onDisconnect, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 const { db } = window.__fb;
 
 /* ================= ユーティリティ ================= */
@@ -515,7 +515,21 @@ function subscribeRoomList(){
   if(unsubRoomList){ unsubRoomList(); unsubRoomList = null; }
   const roomsRef = ref(db, "rooms");
   unsubRoomList = onValue(roomsRef, (snap)=>{
-    renderRoomList(snap.val() || {});
+    const data = snap.val() || {};
+    cleanupOldRooms(data);
+    renderRoomList(data);
+  });
+}
+
+const ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 1日経った部屋は古いとみなす
+
+function cleanupOldRooms(roomsData){
+  const now = Date.now();
+  Object.entries(roomsData).forEach(([roomId, room])=>{
+    const createdAt = room && room.createdAt;
+    if(createdAt && (now - createdAt) > ROOM_MAX_AGE_MS){
+      remove(ref(db, `rooms/${roomId}`)).catch(()=>{});
+    }
   });
 }
 
@@ -524,7 +538,10 @@ function renderRoomList(roomsData){
   const emptyEl = document.getElementById("room-list-empty");
   listEl.innerHTML = "";
 
-  const entries = Object.entries(roomsData).filter(([, room])=> room && room.players);
+  const now = Date.now();
+  const entries = Object.entries(roomsData).filter(([, room])=>
+    room && room.players && !(room.createdAt && (now - room.createdAt) > ROOM_MAX_AGE_MS)
+  );
   if(entries.length===0){
     emptyEl.style.display = "block";
     return;
