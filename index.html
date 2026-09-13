@@ -308,7 +308,7 @@
       <div class="gtitle">ババ抜き</div>
       <div class="gdesc">2〜8人でジョーカーを避けあう定番トランプゲーム。まずは部屋作成から。</div>
     </div>
-    <button class="back-link" id="open-room-list-btn" style="margin-top:6px;">部屋を探す(今開いている部屋の一覧)→</button>
+    <button class="btn ghost" id="open-room-list-btn" style="margin-top:14px;">部屋を探す(今開いている部屋の一覧)→</button>
   </div>
 </div>
 
@@ -523,11 +523,17 @@ function subscribeRoomList(){
 
 const ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 1日経った部屋は古いとみなす
 
+function isRoomStale(room){
+  if(!room) return true;
+  const playerCount = room.players ? Object.keys(room.players).length : 0;
+  if(playerCount === 0) return true;
+  if(room.createdAt && (Date.now() - room.createdAt) > ROOM_MAX_AGE_MS) return true;
+  return false;
+}
+
 function cleanupOldRooms(roomsData){
-  const now = Date.now();
   Object.entries(roomsData).forEach(([roomId, room])=>{
-    const createdAt = room && room.createdAt;
-    if(createdAt && (now - createdAt) > ROOM_MAX_AGE_MS){
+    if(isRoomStale(room)){
       remove(ref(db, `rooms/${roomId}`)).catch(()=>{});
     }
   });
@@ -538,10 +544,7 @@ function renderRoomList(roomsData){
   const emptyEl = document.getElementById("room-list-empty");
   listEl.innerHTML = "";
 
-  const now = Date.now();
-  const entries = Object.entries(roomsData).filter(([, room])=>
-    room && room.players && !(room.createdAt && (now - room.createdAt) > ROOM_MAX_AGE_MS)
-  );
+  const entries = Object.entries(roomsData).filter(([, room])=> !isRoomStale(room));
   if(entries.length===0){
     emptyEl.style.display = "block";
     return;
@@ -727,17 +730,26 @@ function enterRoom(roomId){
   });
 }
 
-document.getElementById("bk-leave-btn").addEventListener("click", ()=>{
-  if(unsub) unsub();
+async function leaveCurrentRoom(){
+  const roomId = currentRoom;
+  if(unsub){ unsub(); unsub = null; }
   currentRoom = null;
+  localStorage.removeItem("bj_last_room");
   showScreen("game-select");
-});
 
-document.getElementById("leave-btn").addEventListener("click", ()=>{
-  if(unsub) unsub();
-  currentRoom = null;
-  showScreen("game-select");
-});
+  if(!roomId) return;
+  try{
+    await remove(ref(db, `rooms/${roomId}/players/${myId}`));
+    await runTransaction(ref(db, `rooms/${roomId}/turnOrder`), (order)=>{
+      if(!order) return order;
+      return order.filter(pid=>pid!==myId);
+    });
+  }catch(e){ /* 部屋がすでに無い等は無視 */ }
+}
+
+document.getElementById("bk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
+
+document.getElementById("leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 
 /* ================= 自動復帰 ================= */
 window.addEventListener("load", ()=>{
