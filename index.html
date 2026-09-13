@@ -57,6 +57,29 @@
   .screen{ width:100%; display:none; flex-direction:column; align-items:center; }
   .screen.active{ display:flex; }
 
+  /* ---- ゲーム選択画面 ---- */
+  #game-select{ justify-content:center; min-height:100vh; padding:24px; }
+  .select-wrap{ width:min(460px,92vw); text-align:center; }
+  .select-wrap h1{ font-size:2.1rem; color:var(--gold-bright); margin:0 0 8px; font-weight:600; }
+  .select-wrap p{ color:var(--cream-dim); font-family:sans-serif; font-size:.92rem; margin:0 0 30px; }
+  .game-card{
+    display:block; width:100%; text-align:left; margin-bottom:16px;
+    background:linear-gradient(180deg,#151915,#0d100d);
+    border:1px solid #2a2f27; border-radius:6px; padding:20px 22px;
+    cursor:pointer; transition:border-color .15s, transform .15s;
+    color:var(--cream);
+  }
+  .game-card:hover{ border-color:var(--gold); transform:translateY(-2px); }
+  .game-card.disabled{ opacity:.55; cursor:default; }
+  .game-card.disabled:hover{ border-color:#2a2f27; transform:none; }
+  .game-card .gtitle{ font-family:"Playfair Display",Georgia,serif; font-size:1.3rem; color:var(--gold-bright); margin-bottom:4px; }
+  .game-card .gdesc{ font-family:sans-serif; font-size:.82rem; color:var(--cream-dim); }
+  .game-card .gtag{
+    display:inline-block; margin-left:8px; font-family:sans-serif; font-size:.68rem;
+    background:rgba(232,199,102,.15); color:var(--gold-bright); border-radius:10px; padding:1px 8px;
+    vertical-align:middle;
+  }
+
   /* ---- ロビー画面 ---- */
   #lobby{ justify-content:center; min-height:100vh; padding:24px; }
   .lobby-card{
@@ -92,9 +115,13 @@
   .btn.small{ width:auto; padding:11px 18px; font-size:.95rem; }
   .divider{ text-align:center; color:#555; font-size:.75rem; margin:22px 0; font-family:sans-serif; }
   .err{ color:#e08a8a; font-size:.82rem; margin-top:-8px; margin-bottom:14px; font-family:sans-serif; min-height:1em; }
+  .back-link{
+    background:none; border:none; color:var(--cream-dim); font-family:sans-serif; font-size:.8rem;
+    cursor:pointer; margin-bottom:20px; padding:0; text-decoration:underline;
+  }
 
   /* ---- テーブル画面 ---- */
-  #table-screen{
+  .table-screen{
     height:100dvh; width:100%; padding:10px 10px calc(8px + env(safe-area-inset-bottom));
     display:flex; flex-direction:column; align-items:center; overflow:hidden;
   }
@@ -250,11 +277,32 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- ==== ゲーム選択画面 ==== -->
+<div class="screen active" id="game-select">
+  <div class="select-wrap">
+    <h1 class="brand">Casino Table</h1>
+    <p>友達とリアルタイムで遊べるカジノゲーム。まずは遊ぶゲームを選んでね。</p>
+    <div class="game-card" id="pick-bj">
+      <div class="gtitle">ブラックジャック</div>
+      <div class="gdesc">ディーラー相手に21を目指す定番ゲーム。全10ラウンドで一番チップが多い人が優勝。</div>
+    </div>
+    <div class="game-card disabled" id="pick-poker">
+      <div class="gtitle">ポーカー <span class="gtag">近日公開</span></div>
+      <div class="gdesc">テキサスホールデム、準備中。もうしばらく待ってね。</div>
+    </div>
+    <div class="game-card" id="pick-babanuki">
+      <div class="gtitle">ババ抜き</div>
+      <div class="gdesc">2〜8人でジョーカーを避けあう定番トランプゲーム。まずは部屋作成から。</div>
+    </div>
+  </div>
+</div>
+
 <!-- ==== ロビー画面 ==== -->
-<div class="screen active" id="lobby">
+<div class="screen" id="lobby">
   <div class="lobby-card">
-    <h1 class="brand">Blackjack Table</h1>
-    <p class="sub">友達とリアルタイムでブラックジャック。全10ラウンドで一番チップが多い人が優勝!名前を入れて部屋を作るか、コードで参加してね。</p>
+    <button class="back-link" id="lobby-back-btn">← ゲーム選択に戻る</button>
+    <h1 class="brand" id="lobby-title">Blackjack Table</h1>
+    <p class="sub" id="lobby-sub">友達とリアルタイムでブラックジャック。全10ラウンドで一番チップが多い人が優勝!名前を入れて部屋を作るか、コードで参加してね。</p>
 
     <label for="name-input">プレイヤー名</label>
     <input type="text" id="name-input" maxlength="10" placeholder="例: たろう">
@@ -272,7 +320,7 @@
 </div>
 
 <!-- ==== テーブル画面 ==== -->
-<div class="screen" id="table-screen">
+<div class="screen table-screen" id="table-screen">
   <div class="topbar">
     <div>部屋コード: <span class="room-code" id="room-code-label">------</span></div>
     <div id="round-label"></div>
@@ -293,6 +341,30 @@
     <div class="msg" id="action-msg"></div>
     <div class="actions" id="actions"></div>
     <button class="btn small host-only" id="start-round-btn">ラウンド開始(ホスト)</button>
+  </div>
+</div>
+
+<!-- ==== ババ抜き・テーブル画面 ==== -->
+<div class="screen table-screen" id="babanuki-table">
+  <div class="topbar">
+    <div>部屋コード: <span class="room-code" id="bk-room-code-label">------</span></div>
+    <div>プレイヤー <span id="bk-player-count">0</span>/8</div>
+    <button class="btn small ghost" id="bk-leave-btn">退室</button>
+  </div>
+
+  <div class="table-wrap">
+    <div class="dealer-zone">
+      <div class="zone-label" id="bk-zone-label">BABANUKI</div>
+      <div class="cards" id="bk-draw-zone"></div>
+      <div class="pot-line" id="bk-status-line" style="max-width:90%;"></div>
+    </div>
+    <div class="seats" id="bk-seats"></div>
+  </div>
+
+  <div class="actionbar">
+    <div class="msg" id="bk-action-msg"></div>
+    <div class="actions" id="bk-actions"></div>
+    <button class="btn small host-only" id="bk-start-btn">ゲーム開始(ホスト)</button>
   </div>
 </div>
 
@@ -354,12 +426,33 @@ let myName = localStorage.getItem("bj_player_name") || "";
 let currentRoom = null;
 let unsub = null;
 let isHost = false;
+let selectedGame = "blackjack";
 
 /* ================= 画面切り替え ================= */
 function showScreen(id){
   document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
 }
+
+/* ================= ゲーム選択 ================= */
+document.getElementById("pick-bj").addEventListener("click", ()=>{
+  selectedGame = "blackjack";
+  document.getElementById("lobby-title").textContent = "Blackjack Table";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでブラックジャック。全10ラウンドで一番チップが多い人が優勝!名前を入れて部屋を作るか、コードで参加してね。";
+  showScreen("lobby");
+});
+document.getElementById("pick-poker").addEventListener("click", ()=>{
+  toast("ポーカーは近日公開!もうしばらく待ってね。");
+});
+document.getElementById("pick-babanuki").addEventListener("click", ()=>{
+  selectedGame = "babanuki";
+  document.getElementById("lobby-title").textContent = "Babanuki Table";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでババ抜き(2〜8人)。ゲーム本体は準備中だけど、部屋の作成・参加はもう試せるよ。";
+  showScreen("lobby");
+});
+document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
+  showScreen("game-select");
+});
 
 /* ================= ロビー ================= */
 const nameInput = document.getElementById("name-input");
@@ -373,21 +466,36 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
 
   const roomId = genRoomCode();
   const roomRef = ref(db, `rooms/${roomId}`);
-  const initialState = {
-    hostId: myId,
-    phase: "betting",
-    deck: newShuffledDeck(),
-    dealer: { hand: [], revealed:false },
-    turnOrder: [myId],
-    currentTurnIndex: 0,
-    createdAt: Date.now(),
-    round: 1,
-    maxRounds: MAX_ROUNDS,
-    winner: null,
-    players: {
-      [myId]: { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat: 0, debt: 0 }
-    }
-  };
+  let initialState;
+  if(selectedGame === "babanuki"){
+    initialState = {
+      game: "babanuki",
+      hostId: myId,
+      phase: "waiting",
+      createdAt: Date.now(),
+      turnOrder: [myId],
+      players: {
+        [myId]: { name: myName, seat: 0, hand: [], cleared: false, online: true }
+      }
+    };
+  } else {
+    initialState = {
+      game: "blackjack",
+      hostId: myId,
+      phase: "betting",
+      deck: newShuffledDeck(),
+      dealer: { hand: [], revealed:false },
+      turnOrder: [myId],
+      currentTurnIndex: 0,
+      createdAt: Date.now(),
+      round: 1,
+      maxRounds: MAX_ROUNDS,
+      winner: null,
+      players: {
+        [myId]: { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat: 0, debt: 0 }
+      }
+    };
+  }
   await set(roomRef, initialState);
   enterRoom(roomId);
 });
@@ -412,13 +520,15 @@ document.getElementById("join-room-btn").addEventListener("click", async ()=>{
     // 新規参加者として追加(空いている席番号を割り当て)
     const seatNums = Object.values(roomData.players).map(p=>p.seat);
     let seat = 0; while(seatNums.includes(seat)) seat++;
-    if(seatNums.length >= 5){
-      document.getElementById("join-err").textContent="満席(最大5人)です";
+    const maxSeats = roomData.game === "babanuki" ? 8 : 5;
+    if(seatNums.length >= maxSeats){
+      document.getElementById("join-err").textContent = `満席(最大${maxSeats}人)です`;
       return;
     }
-    await update(ref(db, `rooms/${roomId}/players/${myId}`), {
-      name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat, debt: 0
-    });
+    const newPlayer = roomData.game === "babanuki"
+      ? { name: myName, seat, hand: [], cleared: false, online: true }
+      : { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat, debt: 0 };
+    await update(ref(db, `rooms/${roomId}/players/${myId}`), newPlayer);
     await runTransaction(ref(db, `rooms/${roomId}/turnOrder`), (order)=>{
       order = order || [];
       if(!order.includes(myId)) order.push(myId);
@@ -431,8 +541,6 @@ document.getElementById("join-room-btn").addEventListener("click", async ()=>{
 function enterRoom(roomId){
   currentRoom = roomId;
   localStorage.setItem("bj_last_room", roomId);
-  document.getElementById("room-code-label").textContent = roomId;
-  showScreen("table-screen");
 
   const roomRef = ref(db, `rooms/${roomId}`);
   onDisconnect(ref(db, `rooms/${roomId}/players/${myId}/online`)).set(false);
@@ -441,17 +549,31 @@ function enterRoom(roomId){
   if(unsub) unsub();
   unsub = onValue(roomRef, (snap)=>{
     const data = snap.val();
-    if(!data){ toast("部屋が閉じられました"); showScreen("lobby"); return; }
+    if(!data){ toast("部屋が閉じられました"); showScreen("game-select"); return; }
     isHost = data.hostId === myId;
-    render(data);
-    maybeAdvanceDealer(data);
+    if(data.game === "babanuki"){
+      document.getElementById("bk-room-code-label").textContent = roomId;
+      showScreen("babanuki-table");
+      bkRender(data);
+    } else {
+      document.getElementById("room-code-label").textContent = roomId;
+      showScreen("table-screen");
+      render(data);
+      maybeAdvanceDealer(data);
+    }
   });
 }
+
+document.getElementById("bk-leave-btn").addEventListener("click", ()=>{
+  if(unsub) unsub();
+  currentRoom = null;
+  showScreen("game-select");
+});
 
 document.getElementById("leave-btn").addEventListener("click", ()=>{
   if(unsub) unsub();
   currentRoom = null;
-  showScreen("lobby");
+  showScreen("game-select");
 });
 
 /* ================= 自動復帰 ================= */
@@ -472,6 +594,10 @@ function cardEl(code, hidden=false){
   el.className = "card " + (["H","D"].includes(suit) ? "red":"black");
   el.innerHTML = `${rank}<span style="font-size:1.1em">${SUIT_SYMBOL[suit]}</span>`;
   return el;
+}
+function miniCardHtml(c){
+  const rank=c.slice(0,-1), suit=c.slice(-1);
+  return `<div class="card ${["H","D"].includes(suit)?"red":"black"}">${rank}${SUIT_SYMBOL[suit]}</div>`;
 }
 
 function render(data){
@@ -527,8 +653,7 @@ function render(data){
     const total = handValue(hand);
     let statusText = "";
     if(data.phase==="gameover") statusText = isWinner ? "🏆 優勝!" : "";
-    else if(data.phase==="betting") statusText = p.chips===0 ? "観戦中(チップ切れ)" : (p.bet>0 ? `ベット ${p.bet}` : "ベット待ち");
-    else if(p.status==="watching") statusText = "観戦中";
+    else if(data.phase==="betting") statusText = p.bet>0 ? `ベット ${p.bet}` : "ベット待ち";
     else if(p.status==="bust") statusText = "バースト";
     else if(p.status==="blackjack") statusText = "ブラックジャック!";
     else if(p.status==="stand") statusText = "スタンド";
@@ -606,10 +731,6 @@ function renderActions(data){
   }
 
   if(data.phase === "betting"){
-    if(me.chips===0){
-      msgEl.textContent = "チップが0のため今ラウンドは観戦です。ホストがラウンドを開始すると他の人だけで進みます。";
-      return;
-    }
     if(me.bet>0){
       msgEl.textContent = "他のプレイヤーのベットを待っています…";
       return;
@@ -659,10 +780,6 @@ function renderActions(data){
   if(data.phase === "playing"){
     const playOrder = data.playOrder || [];
     const currentTurnPid = playOrder[data.currentTurnIndex];
-    if(me.status==="watching"){
-      msgEl.textContent = "このラウンドは観戦中です…";
-      return;
-    }
     if(currentTurnPid !== myId){
       msgEl.textContent = `${(data.players[currentTurnPid]||{}).name || "相手"} の番です…`;
       return;
@@ -692,11 +809,7 @@ function renderActions(data){
   }
 
   if(data.phase === "results"){
-    if(me.status==="watching"){
-      msgEl.textContent = "このラウンドは観戦でした。";
-    } else {
-      msgEl.textContent = me.result ? `結果: ${me.result}` : "";
-    }
+    msgEl.textContent = me.result ? `結果: ${me.result}` : "";
     if(isHost){
       msgEl.textContent += "  次のラウンドはホストが開始できます。";
     }
@@ -891,6 +1004,218 @@ document.getElementById("start-round-btn").addEventListener("click", async ()=>{
     return data;
   });
 });
+
+/* ================================================================
+   ババ抜き
+   ================================================================ */
+const BK_SUITS = ["S","H","D","C"];
+const BK_RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+
+function bkNewDeck(){
+  const deck = [];
+  for(const s of BK_SUITS) for(const r of BK_RANKS) deck.push(r+s);
+  deck.push("JK");
+  for(let i=deck.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [deck[i],deck[j]] = [deck[j],deck[i]];
+  }
+  return deck;
+}
+
+// 手札の中で同じランクのペアを取り除く(ジョーカーは絶対ペアにならない)。元の並び順はできるだけ維持。
+function bkStripPairs(hand){
+  const rankCount = {};
+  hand.forEach(c=>{
+    if(c==="JK") return;
+    const r = c.slice(0,-1);
+    rankCount[r] = (rankCount[r]||0)+1;
+  });
+  const removeCount = {};
+  Object.entries(rankCount).forEach(([r,cnt])=>{ removeCount[r] = cnt - (cnt%2); });
+  const removedSoFar = {};
+  const result = [];
+  hand.forEach(c=>{
+    if(c==="JK"){ result.push(c); return; }
+    const r = c.slice(0,-1);
+    removedSoFar[r] = removedSoFar[r]||0;
+    if(removedSoFar[r] < (removeCount[r]||0)){ removedSoFar[r]++; }
+    else { result.push(c); }
+  });
+  return result;
+}
+
+function bkCardHtml(c){
+  if(c==="JK"){
+    return `<div class="card" style="color:#8a4fd6;font-size:.55rem;font-weight:800;">JOKER</div>`;
+  }
+  return miniCardHtml(c);
+}
+
+async function bkStartGame(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="babanuki") return data;
+    if(data.phase==="playing") return data;
+    const order = data.turnOrder || [];
+    if(order.length<2) return data;
+
+    const deck = bkNewDeck();
+    const hands = {}; order.forEach(pid=>hands[pid]=[]);
+    let i=0;
+    while(deck.length){
+      const pid = order[i % order.length];
+      hands[pid].push(deck.pop());
+      i++;
+    }
+    order.forEach(pid=>{
+      const stripped = bkStripPairs(hands[pid]);
+      data.players[pid].hand = stripped;
+      data.players[pid].cleared = stripped.length===0;
+    });
+    const activeOrder = order.filter(pid=>data.players[pid].hand.length>0);
+    data.activeOrder = activeOrder;
+    data.currentTurnIndex = 0;
+    data.loserPid = null;
+    data.phase = activeOrder.length<=1 ? "gameover" : "playing";
+    if(activeOrder.length===1) data.loserPid = activeOrder[0];
+    return data;
+  });
+}
+
+async function bkDrawCard(cardIndex){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing") return data;
+    const order = data.activeOrder || [];
+    const myIdx = data.currentTurnIndex;
+    const drawerPid = order[myIdx];
+    if(drawerPid !== myId) return data;
+
+    const nextIdx = (myIdx+1) % order.length;
+    const nextPid = order[nextIdx];
+    const nextHand = (data.players[nextPid].hand || []).slice();
+    if(cardIndex<0 || cardIndex>=nextHand.length) return data;
+
+    const drawn = nextHand.splice(cardIndex,1)[0];
+    data.players[nextPid].hand = nextHand;
+
+    const myHand = [...(data.players[drawerPid].hand||[]), drawn];
+    data.players[drawerPid].hand = bkStripPairs(myHand);
+    data.players[drawerPid].cleared = data.players[drawerPid].hand.length===0;
+    data.players[nextPid].cleared = data.players[nextPid].hand.length===0;
+
+    // 次の手番を決定: 円の順序(order)を保ったまま、カードが残っている人まで進める
+    let newDrawerPid = null;
+    for(let k=0;k<order.length;k++){
+      const idx=(nextIdx+k)%order.length;
+      const pid = order[idx];
+      if(data.players[pid].hand.length>0){ newDrawerPid = pid; break; }
+    }
+    const newActiveOrder = order.filter(pid=>data.players[pid].hand.length>0);
+    data.activeOrder = newActiveOrder;
+    if(newActiveOrder.length<=1){
+      data.phase = "gameover";
+      data.loserPid = newActiveOrder.length===1 ? newActiveOrder[0] : null;
+    } else {
+      data.currentTurnIndex = newActiveOrder.indexOf(newDrawerPid);
+    }
+    return data;
+  });
+}
+
+document.getElementById("bk-start-btn").addEventListener("click", ()=>{ bkStartGame(); });
+
+function bkRender(data){
+  const order = data.turnOrder || [];
+  document.getElementById("bk-player-count").textContent = order.length;
+
+  const activeOrder = data.activeOrder || [];
+  const currentDrawerPid = activeOrder[data.currentTurnIndex];
+  const nextPid = activeOrder.length ? activeOrder[(data.currentTurnIndex+1) % activeOrder.length] : null;
+
+  document.getElementById("bk-zone-label").textContent =
+    data.phase==="playing" ? "DRAW" : (data.phase==="gameover" ? "GAME OVER" : "BABANUKI");
+
+  // 引き札ゾーン
+  const drawZoneEl = document.getElementById("bk-draw-zone");
+  const statusLineEl = document.getElementById("bk-status-line");
+  drawZoneEl.innerHTML = "";
+  if(data.phase==="waiting"){
+    statusLineEl.textContent = "ホストがゲームを開始するのを待っています…";
+  } else if(data.phase==="gameover"){
+    const loser = data.players[data.loserPid];
+    statusLineEl.textContent = loser ? `😭 ${loser.name} さんの負け!(最後までジョーカーを持っていました)` : "ゲーム終了!";
+  } else {
+    const drawer = data.players[currentDrawerPid];
+    const target = data.players[nextPid];
+    if(currentDrawerPid===myId){
+      statusLineEl.textContent = `あなたの番です。${target ? target.name : "相手"} さんの手札から1枚引いてね`;
+      (target && target.hand ? target.hand : []).forEach((c,idx)=>{
+        const back = document.createElement("div");
+        back.className = "card back";
+        back.style.cursor = "pointer";
+        back.onclick = ()=> bkDrawCard(idx);
+        drawZoneEl.appendChild(back);
+      });
+    } else {
+      statusLineEl.textContent = `${drawer ? drawer.name : ""} さんが ${target ? target.name : ""} さんから引いています…`;
+    }
+  }
+
+  // 座席
+  const seatsEl = document.getElementById("bk-seats");
+  seatsEl.innerHTML = "";
+  order.forEach(pid=>{
+    const p = data.players[pid];
+    if(!p) return;
+    const isMe = pid===myId;
+    const isDrawerTurn = data.phase==="playing" && pid===currentDrawerPid;
+    const seat = document.createElement("div");
+    seat.className = "seat" + (isMe ? " me":"") + (isDrawerTurn ? " turn":"");
+
+    let statusText = "";
+    if(data.phase==="waiting") statusText = "待機中";
+    else if(data.phase==="gameover") statusText = (data.loserPid===pid) ? "😭 ばば抜き負け" : "🎉 上がり";
+    else statusText = p.cleared ? "🎉 上がり" : (isDrawerTurn ? "手番" : "");
+
+    const hand = p.hand || [];
+    let cardsHtml = "";
+    if(data.phase!=="waiting" && !p.cleared){
+      cardsHtml = isMe
+        ? hand.map(bkCardHtml).join("")
+        : hand.map(()=>`<div class="card back" style="width:26px;height:36px;"></div>`).join("");
+    }
+
+    seat.innerHTML = `
+      <div class="pname">${p.name}${isMe ? " (自分)":""}${data.hostId===pid ? " 👑":""}</div>
+      <div class="cards" style="transform:scale(.62);margin:-6px 0;flex-wrap:wrap;justify-content:center;max-width:160px;">${cardsHtml}</div>
+      <div class="status">${statusText}</div>
+      ${data.phase!=="waiting" ? `<div class="chips">残り${hand.length}枚</div>` : ""}
+    `;
+    seatsEl.appendChild(seat);
+  });
+
+  bkRenderActions(data);
+}
+
+function bkRenderActions(data){
+  const startBtn = document.getElementById("bk-start-btn");
+  const msgEl = document.getElementById("bk-action-msg");
+
+  if(data.phase === "waiting"){
+    const canStart = (data.turnOrder||[]).length >= 2;
+    startBtn.style.display = isHost ? "inline-block" : "none";
+    startBtn.textContent = "ゲーム開始(ホスト)";
+    msgEl.textContent = isHost
+      ? (canStart ? "準備ができたらゲームを開始できます。" : "2人以上集まったら開始できます。")
+      : "ホストがゲームを開始するのを待っています…";
+  } else if(data.phase === "gameover"){
+    startBtn.style.display = isHost ? "inline-block" : "none";
+    startBtn.textContent = "もう一度あそぶ(ホスト)";
+    msgEl.textContent = isHost ? "準備ができたらもう一度あそべます。" : "";
+  } else {
+    startBtn.style.display = "none";
+    msgEl.textContent = "";
+  }
+}
 </script>
 </body>
 </html>
