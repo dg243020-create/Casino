@@ -426,6 +426,8 @@ let myName = localStorage.getItem("bj_player_name") || "";
 let currentRoom = null;
 let unsub = null;
 let isHost = false;
+let bkInitialized = false;
+let bkShownPairTs = 0;
 let selectedGame = "blackjack";
 
 /* ================= 画面切り替え ================= */
@@ -541,6 +543,8 @@ document.getElementById("join-room-btn").addEventListener("click", async ()=>{
 function enterRoom(roomId){
   currentRoom = roomId;
   localStorage.setItem("bj_last_room", roomId);
+  bkInitialized = false;
+  bkShownPairTs = 0;
 
   const roomRef = ref(db, `rooms/${roomId}`);
   onDisconnect(ref(db, `rooms/${roomId}/players/${myId}/online`)).set(false);
@@ -1044,6 +1048,17 @@ function bkStripPairs(hand){
   return result;
 }
 
+// stripPairs前後の手札を比較し、捨てられたカードを特定する(bkStripPairsは並び順を保ったまま部分列を返すため単純な差分で求まる)
+function bkDiffDiscarded(before, after){
+  const discarded = [];
+  let j = 0;
+  for(let i=0;i<before.length;i++){
+    if(j<after.length && before[i]===after[j]){ j++; }
+    else { discarded.push(before[i]); }
+  }
+  return discarded;
+}
+
 function bkCardHtml(c){
   if(c==="JK"){
     return `<div class="card" style="color:#8a4fd6;font-size:.55rem;font-weight:800;">JOKER</div>`;
@@ -1075,6 +1090,7 @@ async function bkStartGame(){
     data.activeOrder = activeOrder;
     data.currentTurnIndex = 0;
     data.loserPid = null;
+    data.lastPairEvent = null;
     data.phase = activeOrder.length<=1 ? "gameover" : "playing";
     if(activeOrder.length===1) data.loserPid = activeOrder[0];
     return data;
@@ -1098,9 +1114,20 @@ async function bkDrawCard(cardIndex){
     data.players[nextPid].hand = nextHand;
 
     const myHand = [...(data.players[drawerPid].hand||[]), drawn];
-    data.players[drawerPid].hand = bkStripPairs(myHand);
-    data.players[drawerPid].cleared = data.players[drawerPid].hand.length===0;
+    const strippedHand = bkStripPairs(myHand);
+    const discarded = bkDiffDiscarded(myHand, strippedHand);
+    data.players[drawerPid].hand = strippedHand;
+    data.players[drawerPid].cleared = strippedHand.length===0;
     data.players[nextPid].cleared = data.players[nextPid].hand.length===0;
+
+    if(discarded.length>0){
+      data.lastPairEvent = {
+        pid: drawerPid,
+        name: data.players[drawerPid].name,
+        cards: discarded,
+        ts: Date.now()
+      };
+    }
 
     // 次の手番を決定: 円の順序(order)を保ったまま、カードが残っている人まで進める
     let newDrawerPid = null;
@@ -1123,7 +1150,30 @@ async function bkDrawCard(cardIndex){
 
 document.getElementById("bk-start-btn").addEventListener("click", ()=>{ bkStartGame(); });
 
+// ペアが捨てられた時のちょっとした演出(捨てられた実際のカードを表示)
+function bkAnnouncePair(evt){
+  const t = document.getElementById("toast");
+  const cardsHtml = evt.cards.map(c=>{
+    if(c==="JK") return `<span style="color:#c9a5ff;font-weight:800;">JOKER</span>`;
+    const rank = c.slice(0,-1), suit = c.slice(-1);
+    const color = ["H","D"].includes(suit) ? "#ff8a8a" : "#eee";
+    return `<span style="display:inline-block;background:#0a0c0a;border:1px solid ${color};color:${color};border-radius:3px;padding:1px 6px;margin:0 2px;font-weight:800;">${rank}${SUIT_SYMBOL[suit]||""}</span>`;
+  }).join("");
+  t.innerHTML = `🂠 <b>${evt.name}</b> さんが ${cardsHtml} のペアを捨てた!`;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>t.classList.remove("show"), 2800);
+}
+
 function bkRender(data){
+  if(!bkInitialized){
+    bkShownPairTs = data.lastPairEvent ? data.lastPairEvent.ts : 0;
+    bkInitialized = true;
+  } else if(data.lastPairEvent && data.lastPairEvent.ts > bkShownPairTs){
+    bkShownPairTs = data.lastPairEvent.ts;
+    bkAnnouncePair(data.lastPairEvent);
+  }
+
   const order = data.turnOrder || [];
   document.getElementById("bk-player-count").textContent = order.length;
 
