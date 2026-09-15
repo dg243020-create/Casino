@@ -304,6 +304,28 @@
   .uno-color-dot.r{ background:#e6453c; } .uno-color-dot.y{ background:#f0c419; }
   .uno-color-dot.g{ background:#3fae4a; } .uno-color-dot.b{ background:#2f7fd1; }
 
+  /* ---- UNO: UNO宣言バッジ・勝利バナー ---- */
+  .uno-declare-badge{
+    display:inline-block; margin-left:6px; padding:1px 8px; border-radius:10px;
+    background:#a33b3b; color:#ffecec; font-family:sans-serif; font-size:.68rem; font-weight:800;
+    vertical-align:middle; animation: unoBadgePulse 1s ease-in-out infinite;
+  }
+  @keyframes unoBadgePulse{
+    0%,100%{ transform:scale(1); box-shadow:0 0 0 rgba(163,59,59,.6); }
+    50%{ transform:scale(1.12); box-shadow:0 0 10px rgba(163,59,59,.6); }
+  }
+  .uno-winner-banner{
+    font-family:"Playfair Display",Georgia,serif; font-size:1.7rem; font-weight:800;
+    color:var(--gold-bright); text-align:center; margin-top:4px; letter-spacing:.02em;
+    text-shadow:0 0 16px rgba(232,199,102,.7), 0 3px 6px rgba(0,0,0,.7);
+    animation: unoWinnerPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes unoWinnerPulse{
+    0%,100%{ transform:scale(1); }
+    50%{ transform:scale(1.05); }
+  }
+  .uno-trophy-big{ font-size:3.2rem; line-height:1; text-align:center; animation: unoWinnerPulse 1.4s ease-in-out infinite; }
+
   .host-only{ display:none; }
   .toast{
     position:fixed; top:14px; left:50%; transform:translateX(-50%);
@@ -328,6 +350,8 @@
     .hand-total{ font-size:1.7rem; }
     .seat-total{ font-size:1.3rem; }
     .actions .btn{ min-width:92px; padding:12px 16px; font-size:.95rem; }
+    .uno-winner-banner{ font-size:1.3rem; }
+    .uno-trophy-big{ font-size:2.4rem; }
   }
 </style>
 </head>
@@ -2375,7 +2399,44 @@ async function unDrawCard(){
 
 document.getElementById("un-start-btn").addEventListener("click", ()=>{ unStartGame(); });
 
+/* UNO宣言(手札が1枚になった瞬間)の演出 */
+function unAnnounceUno(evt){
+  const t = document.getElementById("toast");
+  clearTimeout(toast._t);
+  t.classList.remove("show");
+  void t.offsetWidth; // 強制リフロー
+  t.innerHTML = `🚨 <b>${evt.name}</b> さんが <b>UNO!</b>(残り1枚)`;
+  t.classList.add("show");
+  toast._t = setTimeout(()=>t.classList.remove("show"), 2400);
+}
+
+/* 山札切れ→捨て札シャッフルの通知演出 */
+function unAnnounceReshuffle(){
+  const t = document.getElementById("toast");
+  clearTimeout(toast._t);
+  t.classList.remove("show");
+  void t.offsetWidth;
+  t.innerHTML = `🔀 山札が切れたので、捨て札を混ぜ直したよ`;
+  t.classList.add("show");
+  toast._t = setTimeout(()=>t.classList.remove("show"), 2400);
+}
+
 function unRender(data){
+  if(!unInitialized){
+    unShownUnoTs = data.lastUnoEvent ? data.lastUnoEvent.ts : 0;
+    unShownReshuffleTs = data.lastReshuffleEvent ? data.lastReshuffleEvent.ts : 0;
+    unInitialized = true;
+  } else {
+    if(data.lastUnoEvent && data.lastUnoEvent.ts > unShownUnoTs){
+      unShownUnoTs = data.lastUnoEvent.ts;
+      unAnnounceUno(data.lastUnoEvent);
+    }
+    if(data.lastReshuffleEvent && data.lastReshuffleEvent.ts > unShownReshuffleTs){
+      unShownReshuffleTs = data.lastReshuffleEvent.ts;
+      unAnnounceReshuffle();
+    }
+  }
+
   const order = data.turnOrder || [];
   document.getElementById("un-player-count").textContent = order.length;
 
@@ -2383,18 +2444,22 @@ function unRender(data){
   discardEl.innerHTML = "";
   const statusEl = document.getElementById("un-status-line");
   const top = data.discard && data.discard.length ? data.discard[data.discard.length-1] : null;
-  if(top){
-    discardEl.innerHTML = unCardDivHtml(top, "big");
-  }
 
-  if(data.phase==="playing"){
-    const stackInfo = data.pendingDraw ? ` ・ ${data.pendingDraw.kind==="D2"?"+2":"+4"}積み重ね中(計${data.pendingDraw.amount}枚)` : "";
-    statusEl.textContent = `場の色: ${UN_COLOR_NAME[data.currentColor] || ""} ・ 残り山札 ${((data.deck||[]).length)}枚${stackInfo}`;
-  } else if(data.phase==="gameover"){
+  if(data.phase==="gameover"){
+    // 勝利画面の仕上げ: 捨て札エリアをトロフィー表示に切り替え、下に優勝バナーを出す
+    discardEl.innerHTML = `<div class="uno-trophy-big">🏆</div>`;
     const w = data.winnerPid ? data.players[data.winnerPid] : null;
-    statusEl.textContent = w ? `🎉 ${w.name} さんの上がり!` : "";
+    statusEl.innerHTML = w ? `<div class="uno-winner-banner">🎉 ${w.name} さんの勝利! 🎉</div>` : "";
   } else {
-    statusEl.textContent = "";
+    if(top){
+      discardEl.innerHTML = unCardDivHtml(top, "big");
+    }
+    if(data.phase==="playing"){
+      const stackInfo = data.pendingDraw ? ` ・ ${data.pendingDraw.kind==="D2"?"+2":"+4"}積み重ね中(計${data.pendingDraw.amount}枚)` : "";
+      statusEl.textContent = `場の色: ${UN_COLOR_NAME[data.currentColor] || ""} ・ 残り山札 ${((data.deck||[]).length)}枚${stackInfo}`;
+    } else {
+      statusEl.textContent = "";
+    }
   }
 
   const seatsEl = document.getElementById("un-seats");
@@ -2410,14 +2475,15 @@ function unRender(data){
 
     let statusText = "";
     if(data.phase==="waiting") statusText = p.online===false ? "オフライン":"待機中";
-    else if(isWinner) statusText = "🎉 上がり!";
+    else if(isWinner) statusText = "🏆 上がり!";
     else if(isTurn) statusText = "手番";
 
     const handCount = (p.hand||[]).length;
+    const unoBadge = (data.phase==="playing" && handCount===1) ? `<span class="uno-declare-badge">UNO!</span>` : "";
     seat.innerHTML = `
-      <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}</div>
+      <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}${isWinner?" 🏆":""}</div>
       <div class="status">${statusText}</div>
-      ${data.phase!=="waiting" ? `<div class="chips">残り${handCount}枚${handCount===1?" (UNO!)":""}</div>` : ""}
+      ${data.phase!=="waiting" ? `<div class="chips">残り${handCount}枚${unoBadge}</div>` : ""}
     `;
     seatsEl.appendChild(seat);
   });
