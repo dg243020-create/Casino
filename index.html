@@ -2523,12 +2523,6 @@ function unRenderActions(data){
   if(!me) return;
   const myTurn = order[data.currentIdx]===myId;
 
-  if(!myTurn){
-    const cur = data.players[order[data.currentIdx]];
-    msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
-    return;
-  }
-
   const top = data.discard[data.discard.length-1];
   const hand = me.hand || [];
 
@@ -2537,6 +2531,19 @@ function unRenderActions(data){
     const c2 = unParseCard(card);
     return (data.pendingDraw.kind==="D2" && c2.kind==="D2") || (data.pendingDraw.kind==="wild4" && c2.kind==="wild4");
   };
+
+  if(!myTurn){
+    const cur = data.players[order[data.currentIdx]];
+    msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
+    // 自分のターンでなくても手札は常に見えるようにする(操作は不可)
+    hand.forEach((card)=>{
+      const el = document.createElement("div");
+      el.innerHTML = unCardDivHtml(card, "disabled");
+      actionsEl.appendChild(el.firstChild);
+    });
+    return;
+  }
+
   const hasPlayable = hand.some(isStackable);
 
   if(data.pendingDraw){
@@ -2547,7 +2554,6 @@ function unRenderActions(data){
   }
 
   let pendingIndex = null;
-
   const finishPlay = (idx, color)=>{ unPlayCard(idx, color); };
 
   hand.forEach((card,idx)=>{
@@ -2559,7 +2565,6 @@ function unRenderActions(data){
       if(!playable) return;
       const c = unParseCard(card);
       if(c.kind==="wild" || c.kind==="wild4"){
-        // 色選択UIを出す
         pendingIndex = idx;
         colorPickerEl.style.display = "flex";
         colorPickerEl.innerHTML = UN_COLORS.map(col=>
