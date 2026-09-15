@@ -2252,6 +2252,7 @@ async function unStartGame(){
     data.currentIdx = 0;
     data.winnerPid = null;
     data.pendingDraw = null;
+    data.awaitingDrawChoice = null;
     data.lastUnoEvent = null;
     data.lastReshuffleEvent = null;
     data.phase = "playing";
@@ -2280,6 +2281,9 @@ async function unPlayCard(cardIndex, chosenColor){
     } else {
       if(!unCanPlay(card, top, data.currentColor)) return data;
     }
+
+    // カードを出したので「引いたカードをどうするか」の選択待ち状態は解除する
+    data.awaitingDrawChoice = null;
 
     p.hand.splice(cardIndex,1);
     data.discard.push(card);
@@ -2367,10 +2371,15 @@ async function unDrawStack(){
   });
 }
 
+// 山札から1枚引く。
+// 引いたカードがその場で出せる場合は、ターンを進めずに
+// 「そのカードを出す」か「パスしてターンを終了する」かをプレイヤーに選ばせる。
+// 出せないカードだった場合は、従来どおりそのままターンを進める。
 async function unDrawCard(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
     if(data.pendingDraw) return data; // スタック中はunDrawStackを使う
+    if(data.awaitingDrawChoice) return data; // 既に引いたカードの選択待ち中は多重に引けない
     const order = data.turnOrder;
     const pid = order[data.currentIdx];
     if(pid!==myId) return data;
@@ -2390,8 +2399,30 @@ async function unDrawCard(){
       data.discard = [keepTop];
       data.lastReshuffleEvent = { ts: Date.now() };
     }
-    p.hand.push(deck.pop());
+    const drawnCard = deck.pop();
+    p.hand.push(drawnCard);
     data.deck = deck;
+
+    if(unCanPlay(drawnCard, top, data.currentColor)){
+      // 引いたカードがその場で出せる → ターンは進めず、出す/パスの選択待ちにする
+      data.awaitingDrawChoice = myId;
+    } else {
+      data.awaitingDrawChoice = null;
+      data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
+    }
+    return data;
+  });
+}
+
+// 引いたカードを出さずにターンを終了する(パス)
+async function unPassTurn(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing") return data;
+    if(data.awaitingDrawChoice !== myId) return data;
+    const order = data.turnOrder;
+    const pid = order[data.currentIdx];
+    if(pid!==myId) return data;
+    data.awaitingDrawChoice = null;
     data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
     return data;
   });
@@ -2545,15 +2576,19 @@ function unRenderActions(data){
   }
 
   const hasPlayable = hand.some(isStackable);
+  const awaitingChoice = data.awaitingDrawChoice === myId;
 
   if(data.pendingDraw){
     const kindLabel = data.pendingDraw.kind==="D2" ? "+2" : "+4";
     msgEl.textContent = `あなたの番です。${kindLabel}が積まれています(合計${data.pendingDraw.amount}枚)。同じ種類のカードを重ねるか、引いてね`;
+  } else if(awaitingChoice){
+    msgEl.textContent = "カードを引きました。そのカードを出すか、パスしてターンを終了できます。";
   } else {
     msgEl.textContent = "あなたの番です。出せるカードをタップしてね";
   }
 
   let pendingIndex = null;
+
   const finishPlay = (idx, color)=>{ unPlayCard(idx, color); };
 
   hand.forEach((card,idx)=>{
@@ -2565,6 +2600,7 @@ function unRenderActions(data){
       if(!playable) return;
       const c = unParseCard(card);
       if(c.kind==="wild" || c.kind==="wild4"){
+        // 色選択UIを出す
         pendingIndex = idx;
         colorPickerEl.style.display = "flex";
         colorPickerEl.innerHTML = UN_COLORS.map(col=>
@@ -2580,7 +2616,19 @@ function unRenderActions(data){
     actionsEl.appendChild(cardEl2);
   });
 
-  if(!hasPlayable){
+  if(awaitingChoice){
+    // 引いたカードを出すか、そのままパスしてターンを終了するかを選べる
+    const passRow = document.createElement("div");
+    passRow.style.width = "100%";
+    passRow.style.textAlign = "center";
+    passRow.style.marginTop = "8px";
+    const passBtn = document.createElement("button");
+    passBtn.className = "btn small";
+    passBtn.textContent = "パス(ターン終了)";
+    passBtn.onclick = ()=> unPassTurn();
+    passRow.appendChild(passBtn);
+    actionsEl.appendChild(passRow);
+  } else if(!hasPlayable){
     const drawRow = document.createElement("div");
     drawRow.style.width = "100%";
     drawRow.style.textAlign = "center";
