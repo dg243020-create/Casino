@@ -573,6 +573,9 @@ let unsub = null;
 let isHost = false;
 let bkInitialized = false;
 let bkShownPairTs = 0;
+let unInitialized = false;
+let unShownUnoTs = 0;
+let unShownReshuffleTs = 0;
 let selectedGame = "blackjack";
 
 /* ================= 画面切り替え ================= */
@@ -869,6 +872,9 @@ function enterRoom(roomId){
   localStorage.setItem("bj_last_room", roomId);
   bkInitialized = false;
   bkShownPairTs = 0;
+  unInitialized = false;
+  unShownUnoTs = 0;
+  unShownReshuffleTs = 0;
 
   const roomRef = ref(db, `rooms/${roomId}`);
   onDisconnect(ref(db, `rooms/${roomId}/players/${myId}/online`)).set(false);
@@ -2221,6 +2227,9 @@ async function unStartGame(){
     data.direction = 1;
     data.currentIdx = 0;
     data.winnerPid = null;
+    data.pendingDraw = null;
+    data.lastUnoEvent = null;
+    data.lastReshuffleEvent = null;
     data.phase = "playing";
     return data;
   });
@@ -2230,18 +2239,27 @@ async function unPlayCard(cardIndex, chosenColor){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
     const order = data.turnOrder;
+    const n = order.length;
     const pid = order[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
     const card = p.hand[cardIndex];
     if(!card) return data;
+    const c = unParseCard(card);
     const top = data.discard[data.discard.length-1];
-    if(!unCanPlay(card, top, data.currentColor)) return data;
+
+    if(data.pendingDraw){
+      // +2/+4が積まれている間は、同じ種類のドローカードしか出せない
+      const needKind = data.pendingDraw.kind; // "D2" or "wild4"
+      const matches = (needKind==="D2" && c.kind==="D2") || (needKind==="wild4" && c.kind==="wild4");
+      if(!matches) return data;
+    } else {
+      if(!unCanPlay(card, top, data.currentColor)) return data;
+    }
 
     p.hand.splice(cardIndex,1);
     data.discard.push(card);
 
-    const c = unParseCard(card);
     if(c.kind==="wild" || c.kind==="wild4"){
       data.currentColor = UN_COLORS.includes(chosenColor) ? chosenColor : UN_COLORS[0];
     } else {
@@ -2251,11 +2269,76 @@ async function unPlayCard(cardIndex, chosenColor){
     if(p.hand.length===0){
       data.phase = "gameover";
       data.winnerPid = pid;
+      data.pendingDraw = null;
       return data;
     }
 
-    // Part1: スキップ/リバース/ドロー効果はまだ実装していないので、単純に隣の人へ手番を渡す
-    data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
+    if(p.hand.length===1){
+      data.lastUnoEvent = { pid, name: p.name, ts: Date.now() };
+    }
+
+    if(c.kind==="D2"){
+      const base = (data.pendingDraw && data.pendingDraw.kind==="D2") ? data.pendingDraw.amount : 0;
+      data.pendingDraw = { kind:"D2", amount: base + 2 };
+      data.currentIdx = (data.currentIdx + data.direction + n) % n;
+      return data;
+    }
+    if(c.kind==="wild4"){
+      const base = (data.pendingDraw && data.pendingDraw.kind==="wild4") ? data.pendingDraw.amount : 0;
+      data.pendingDraw = { kind:"wild4", amount: base + 4 };
+      data.currentIdx = (data.currentIdx + data.direction + n) % n;
+      return data;
+    }
+    if(c.kind==="S"){
+      // 次の人を1人飛ばす
+      data.currentIdx = (((data.currentIdx + data.direction*2) % n) + n) % n;
+      return data;
+    }
+    if(c.kind==="R"){
+      data.direction *= -1;
+      if(n===2){
+        // 2人プレイ時はリバース=スキップ扱い(もう一度自分の番)
+        data.currentIdx = (((data.currentIdx + data.direction*2) % n) + n) % n;
+      } else {
+        data.currentIdx = (((data.currentIdx + data.direction) % n) + n) % n;
+      }
+      return data;
+    }
+
+    // 通常カード(数字・ワイルド)
+    data.currentIdx = (data.currentIdx + data.direction + n) % n;
+    return data;
+  });
+}
+
+async function unDrawStack(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing" || !data.pendingDraw) return data;
+    const order = data.turnOrder;
+    const n = order.length;
+    const pid = order[data.currentIdx];
+    if(pid!==myId) return data;
+    const p = data.players[pid];
+    const amount = data.pendingDraw.amount;
+    let deck = data.deck;
+    let reshuffled = false;
+    for(let i=0;i<amount;i++){
+      if(deck.length===0){
+        const keepTop = data.discard.pop();
+        deck = data.discard;
+        for(let j=deck.length-1;j>0;j--){
+          const k = Math.floor(Math.random()*(j+1));
+          [deck[j],deck[k]] = [deck[k],deck[j]];
+        }
+        data.discard = [keepTop];
+        reshuffled = true;
+      }
+      p.hand.push(deck.pop());
+    }
+    data.deck = deck;
+    data.pendingDraw = null;
+    if(reshuffled) data.lastReshuffleEvent = { ts: Date.now() };
+    data.currentIdx = (data.currentIdx + data.direction + n) % n;
     return data;
   });
 }
@@ -2263,6 +2346,7 @@ async function unPlayCard(cardIndex, chosenColor){
 async function unDrawCard(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
+    if(data.pendingDraw) return data; // スタック中はunDrawStackを使う
     const order = data.turnOrder;
     const pid = order[data.currentIdx];
     if(pid!==myId) return data;
@@ -2280,6 +2364,7 @@ async function unDrawCard(){
         [deck[i],deck[j]] = [deck[j],deck[i]];
       }
       data.discard = [keepTop];
+      data.lastReshuffleEvent = { ts: Date.now() };
     }
     p.hand.push(deck.pop());
     data.deck = deck;
@@ -2303,7 +2388,8 @@ function unRender(data){
   }
 
   if(data.phase==="playing"){
-    statusEl.textContent = `場の色: ${UN_COLOR_NAME[data.currentColor] || ""} ・ 残り山札 ${((data.deck||[]).length)}枚`;
+    const stackInfo = data.pendingDraw ? ` ・ ${data.pendingDraw.kind==="D2"?"+2":"+4"}積み重ね中(計${data.pendingDraw.amount}枚)` : "";
+    statusEl.textContent = `場の色: ${UN_COLOR_NAME[data.currentColor] || ""} ・ 残り山札 ${((data.deck||[]).length)}枚${stackInfo}`;
   } else if(data.phase==="gameover"){
     const w = data.winnerPid ? data.players[data.winnerPid] : null;
     statusEl.textContent = w ? `🎉 ${w.name} さんの上がり!` : "";
@@ -2379,15 +2465,27 @@ function unRenderActions(data){
 
   const top = data.discard[data.discard.length-1];
   const hand = me.hand || [];
-  const hasPlayable = hand.some(c=>unCanPlay(c, top, data.currentColor));
-  msgEl.textContent = "あなたの番です。出せるカードをタップしてね";
+
+  const isStackable = (card)=>{
+    if(!data.pendingDraw) return unCanPlay(card, top, data.currentColor);
+    const c2 = unParseCard(card);
+    return (data.pendingDraw.kind==="D2" && c2.kind==="D2") || (data.pendingDraw.kind==="wild4" && c2.kind==="wild4");
+  };
+  const hasPlayable = hand.some(isStackable);
+
+  if(data.pendingDraw){
+    const kindLabel = data.pendingDraw.kind==="D2" ? "+2" : "+4";
+    msgEl.textContent = `あなたの番です。${kindLabel}が積まれています(合計${data.pendingDraw.amount}枚)。同じ種類のカードを重ねるか、引いてね`;
+  } else {
+    msgEl.textContent = "あなたの番です。出せるカードをタップしてね";
+  }
 
   let pendingIndex = null;
 
   const finishPlay = (idx, color)=>{ unPlayCard(idx, color); };
 
   hand.forEach((card,idx)=>{
-    const playable = unCanPlay(card, top, data.currentColor);
+    const playable = isStackable(card);
     const el = document.createElement("div");
     el.innerHTML = unCardDivHtml(card, playable ? "" : "disabled");
     const cardEl2 = el.firstChild;
@@ -2418,8 +2516,13 @@ function unRenderActions(data){
     drawRow.style.marginTop = "8px";
     const drawBtn = document.createElement("button");
     drawBtn.className = "btn small";
-    drawBtn.textContent = "山札から引く";
-    drawBtn.onclick = ()=> unDrawCard();
+    if(data.pendingDraw){
+      drawBtn.textContent = `${data.pendingDraw.amount}枚引いてターン終了`;
+      drawBtn.onclick = ()=> unDrawStack();
+    } else {
+      drawBtn.textContent = "山札から引く";
+      drawBtn.onclick = ()=> unDrawCard();
+    }
     drawRow.appendChild(drawBtn);
     actionsEl.appendChild(drawRow);
   }
