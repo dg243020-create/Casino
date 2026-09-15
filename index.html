@@ -325,6 +325,11 @@
     50%{ transform:scale(1.05); }
   }
   .uno-trophy-big{ font-size:3.2rem; line-height:1; text-align:center; animation: unoWinnerPulse 1.4s ease-in-out infinite; }
+  .uno-rank-badge{
+    display:inline-block; margin-left:6px; padding:1px 8px; border-radius:10px;
+    background:rgba(232,199,102,.2); color:var(--gold-bright); font-family:sans-serif; font-size:.68rem; font-weight:800;
+    vertical-align:middle;
+  }
 
   .host-only{ display:none; }
   .toast{
@@ -505,7 +510,7 @@
   </div>
 </div>
 
-<!-- ==== UNO・テーブル画面(部屋の入退室のみ、ゲーム本体は準備中) ==== -->
+<!-- ==== UNO・テーブル画面 ==== -->
 <div class="screen table-screen" id="uno-table">
   <div class="topbar">
     <div id="un-room-name-label" style="color:var(--cream);font-weight:700;"></div>
@@ -2163,8 +2168,6 @@ function pkRenderActions(data){
 
 /* ================================================================
    UNO
-   Part 1: デッキ生成・配札・基本の出す/引く・上がり判定
-   (スキップ/リバース/+2/+4の効果と積み重ね、UNO宣言演出はPart2以降で実装)
    ================================================================ */
 const UN_COLORS = ["R","Y","G","B"];
 const UN_COLOR_NAME = { R:"レッド", Y:"イエロー", G:"グリーン", B:"ブルー" };
@@ -2225,6 +2228,15 @@ function unCardDivHtml(card, extraClass){
   return `<div class="uno-card ${unColorClass(card)} ${extraClass||""}">${unCardLabel(card)}</div>`;
 }
 
+// activeOrder上でfromPidから指定ステップ・方向だけ進んだ先のpidを返す(円環)
+function unStepPid(activeOrder, fromPid, steps, direction){
+  const idx = activeOrder.indexOf(fromPid);
+  const n = activeOrder.length;
+  if(idx<0 || n===0) return null;
+  const newIdx = (((idx + steps*direction) % n) + n) % n;
+  return activeOrder[newIdx];
+}
+
 async function unStartGame(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.game!=="uno") return data;
@@ -2249,8 +2261,11 @@ async function unStartGame(){
     data.discard = [starter];
     data.currentColor = unParseCard(starter).color;
     data.direction = 1;
+    data.activeOrder = order.slice();
     data.currentIdx = 0;
+    data.finishOrder = [];
     data.winnerPid = null;
+    data.loserPid = null;
     data.pendingDraw = null;
     data.awaitingDrawChoice = null;
     data.lastUnoEvent = null;
@@ -2260,12 +2275,33 @@ async function unStartGame(){
   });
 }
 
+// 手札が0になったプレイヤーをactiveOrderから抜き、finishOrderに記録する。
+// 残りが1人になったらその人を最下位としてゲーム終了にする。nextPidは「このカードの効果を踏まえて次に打つべき人」。
+function unRetirePlayer(data, finishedPid, nextPid){
+  data.finishOrder = data.finishOrder || [];
+  data.finishOrder.push(finishedPid);
+  data.activeOrder = data.activeOrder.filter(pid=>pid!==finishedPid);
+
+  if(data.activeOrder.length<=1){
+    if(data.activeOrder.length===1){
+      data.finishOrder.push(data.activeOrder[0]);
+      data.loserPid = data.activeOrder[0];
+    }
+    data.winnerPid = data.finishOrder[0] || null;
+    data.pendingDraw = null;
+    data.phase = "gameover";
+    return;
+  }
+  data.currentIdx = data.activeOrder.indexOf(nextPid);
+  if(data.currentIdx<0) data.currentIdx = 0; // 念のため
+}
+
 async function unPlayCard(cardIndex, chosenColor){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
-    const order = data.turnOrder;
-    const n = order.length;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const n = activeOrder.length;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
     const card = p.hand[cardIndex];
@@ -2294,10 +2330,22 @@ async function unPlayCard(cardIndex, chosenColor){
       data.currentColor = c.color;
     }
 
+    // このカードの効果によって「次に打つべき人」を、まだ本人がactiveOrderにいる状態で計算しておく
+    let nextPid;
+    if(c.kind==="S"){
+      nextPid = unStepPid(activeOrder, pid, 2, data.direction);
+    } else if(c.kind==="R"){
+      data.direction *= -1;
+      nextPid = unStepPid(activeOrder, pid, n===2 ? 2 : 1, data.direction);
+    } else {
+      // 数字・ワイルド・D2・wild4(初回 or 積み重ね)は通常どおり1人分進める
+      nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+    }
+
     if(p.hand.length===0){
-      data.phase = "gameover";
-      data.winnerPid = pid;
-      data.pendingDraw = null;
+      // 上がり: ランキングに記録して、まだ2人以上残っていればゲームを続行する
+      if(p.hand.length===1){ /* noop: 0枚なのでUNOイベントは出さない */ }
+      unRetirePlayer(data, pid, nextPid);
       return data;
     }
 
@@ -2308,33 +2356,17 @@ async function unPlayCard(cardIndex, chosenColor){
     if(c.kind==="D2"){
       const base = (data.pendingDraw && data.pendingDraw.kind==="D2") ? data.pendingDraw.amount : 0;
       data.pendingDraw = { kind:"D2", amount: base + 2 };
-      data.currentIdx = (data.currentIdx + data.direction + n) % n;
+      data.currentIdx = activeOrder.indexOf(nextPid);
       return data;
     }
     if(c.kind==="wild4"){
       const base = (data.pendingDraw && data.pendingDraw.kind==="wild4") ? data.pendingDraw.amount : 0;
       data.pendingDraw = { kind:"wild4", amount: base + 4 };
-      data.currentIdx = (data.currentIdx + data.direction + n) % n;
-      return data;
-    }
-    if(c.kind==="S"){
-      // 次の人を1人飛ばす
-      data.currentIdx = (((data.currentIdx + data.direction*2) % n) + n) % n;
-      return data;
-    }
-    if(c.kind==="R"){
-      data.direction *= -1;
-      if(n===2){
-        // 2人プレイ時はリバース=スキップ扱い(もう一度自分の番)
-        data.currentIdx = (((data.currentIdx + data.direction*2) % n) + n) % n;
-      } else {
-        data.currentIdx = (((data.currentIdx + data.direction) % n) + n) % n;
-      }
+      data.currentIdx = activeOrder.indexOf(nextPid);
       return data;
     }
 
-    // 通常カード(数字・ワイルド)
-    data.currentIdx = (data.currentIdx + data.direction + n) % n;
+    data.currentIdx = activeOrder.indexOf(nextPid);
     return data;
   });
 }
@@ -2342,9 +2374,8 @@ async function unPlayCard(cardIndex, chosenColor){
 async function unDrawStack(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing" || !data.pendingDraw) return data;
-    const order = data.turnOrder;
-    const n = order.length;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
     const amount = data.pendingDraw.amount;
@@ -2366,7 +2397,8 @@ async function unDrawStack(){
     data.deck = deck;
     data.pendingDraw = null;
     if(reshuffled) data.lastReshuffleEvent = { ts: Date.now() };
-    data.currentIdx = (data.currentIdx + data.direction + n) % n;
+    const nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+    data.currentIdx = activeOrder.indexOf(nextPid);
     return data;
   });
 }
@@ -2380,8 +2412,8 @@ async function unDrawCard(){
     if(!data || data.phase!=="playing") return data;
     if(data.pendingDraw) return data; // スタック中はunDrawStackを使う
     if(data.awaitingDrawChoice) return data; // 既に引いたカードの選択待ち中は多重に引けない
-    const order = data.turnOrder;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
     const top = data.discard[data.discard.length-1];
@@ -2408,7 +2440,8 @@ async function unDrawCard(){
       data.awaitingDrawChoice = myId;
     } else {
       data.awaitingDrawChoice = null;
-      data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
+      const nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+      data.currentIdx = activeOrder.indexOf(nextPid);
     }
     return data;
   });
@@ -2419,11 +2452,12 @@ async function unPassTurn(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
     if(data.awaitingDrawChoice !== myId) return data;
-    const order = data.turnOrder;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     data.awaitingDrawChoice = null;
-    data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
+    const nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+    data.currentIdx = activeOrder.indexOf(nextPid);
     return data;
   });
 }
@@ -2450,6 +2484,13 @@ function unAnnounceReshuffle(){
   t.innerHTML = `🔀 山札が切れたので、捨て札を混ぜ直したよ`;
   t.classList.add("show");
   toast._t = setTimeout(()=>t.classList.remove("show"), 2400);
+}
+
+const UN_RANK_EMOJI = ["🥇","🥈","🥉"];
+function unRankLabel(rankIndex, totalPlayers, isLast){
+  if(isLast) return "💩 最下位";
+  const medal = UN_RANK_EMOJI[rankIndex] || "";
+  return `${medal} ${rankIndex+1}位`.trim();
 }
 
 function unRender(data){
@@ -2480,7 +2521,7 @@ function unRender(data){
     // 勝利画面の仕上げ: 捨て札エリアをトロフィー表示に切り替え、下に優勝バナーを出す
     discardEl.innerHTML = `<div class="uno-trophy-big">🏆</div>`;
     const w = data.winnerPid ? data.players[data.winnerPid] : null;
-    statusEl.innerHTML = w ? `<div class="uno-winner-banner">🎉 ${w.name} さんの勝利! 🎉</div>` : "";
+    statusEl.innerHTML = w ? `<div class="uno-winner-banner">🎉 ${w.name} さんの優勝! 🎉</div>` : "";
   } else {
     if(top){
       discardEl.innerHTML = unCardDivHtml(top, "big");
@@ -2493,28 +2534,38 @@ function unRender(data){
     }
   }
 
+  const finishOrder = data.finishOrder || [];
+  const totalPlayers = order.length;
+
   const seatsEl = document.getElementById("un-seats");
   seatsEl.innerHTML = "";
   order.forEach((pid,idx)=>{
     const p = data.players[pid];
     if(!p) return;
     const isMe = pid===myId;
-    const isTurn = data.phase==="playing" && order[data.currentIdx]===pid;
+    const activeOrder = data.activeOrder || [];
+    const isTurn = data.phase==="playing" && activeOrder[data.currentIdx]===pid;
+    const finishIdx = finishOrder.indexOf(pid);
     const isWinner = data.phase==="gameover" && data.winnerPid===pid;
+    const isLoser = data.phase==="gameover" && data.loserPid===pid;
     const seat = document.createElement("div");
     seat.className = "seat" + (isMe?" me":"") + (isTurn?" turn":"") + (isWinner?" winner":"");
 
     let statusText = "";
     if(data.phase==="waiting") statusText = p.online===false ? "オフライン":"待機中";
-    else if(isWinner) statusText = "🏆 上がり!";
-    else if(isTurn) statusText = "手番";
+    else if(data.phase==="gameover" && finishIdx>=0){
+      statusText = unRankLabel(finishIdx, totalPlayers, isLoser);
+    } else if(finishIdx>=0){
+      statusText = unRankLabel(finishIdx, totalPlayers, false); // ゲーム続行中に既に上がっている人
+    } else if(isTurn) statusText = "手番";
 
     const handCount = (p.hand||[]).length;
-    const unoBadge = (data.phase==="playing" && handCount===1) ? `<span class="uno-declare-badge">UNO!</span>` : "";
+    const stillPlaying = finishIdx<0;
+    const unoBadge = (data.phase==="playing" && stillPlaying && handCount===1) ? `<span class="uno-declare-badge">UNO!</span>` : "";
     seat.innerHTML = `
       <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}${isWinner?" 🏆":""}</div>
       <div class="status">${statusText}</div>
-      ${data.phase!=="waiting" ? `<div class="chips">残り${handCount}枚${unoBadge}</div>` : ""}
+      ${(data.phase!=="waiting" && stillPlaying) ? `<div class="chips">残り${handCount}枚${unoBadge}</div>` : ""}
     `;
     seatsEl.appendChild(seat);
   });
@@ -2549,10 +2600,19 @@ function unRenderActions(data){
   }
 
   startBtn.style.display = "none";
-  const order = data.turnOrder || [];
   const me = data.players[myId];
   if(!me) return;
-  const myTurn = order[data.currentIdx]===myId;
+
+  const activeOrder = data.activeOrder || [];
+  const finishOrder = data.finishOrder || [];
+  const alreadyFinished = finishOrder.includes(myId);
+
+  if(alreadyFinished){
+    msgEl.textContent = "上がり済みです。残りのプレイヤーの決着を見守っていてね。";
+    return;
+  }
+
+  const myTurn = activeOrder[data.currentIdx]===myId;
 
   const top = data.discard[data.discard.length-1];
   const hand = me.hand || [];
@@ -2564,7 +2624,7 @@ function unRenderActions(data){
   };
 
   if(!myTurn){
-    const cur = data.players[order[data.currentIdx]];
+    const cur = data.players[activeOrder[data.currentIdx]];
     msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
     // 自分のターンでなくても手札は常に見えるようにする(操作は不可)
     hand.forEach((card)=>{
