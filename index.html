@@ -378,7 +378,7 @@
     </div>
     <div class="game-card" id="pick-uno">
       <div class="gtitle">UNO</div>
-      <div class="gdesc">最大4人。+2/+4は同種のみ積み重ね可。まずは部屋作成から。</div>
+      <div class="gdesc">最大8人。+2/+4は同種のみ積み重ね可。まずは部屋作成から。</div>
     </div>
     <button class="btn ghost" id="open-room-list-btn" style="margin-top:14px;">部屋を探す(今開いている部屋の一覧)→</button>
   </div>
@@ -510,7 +510,7 @@
   <div class="topbar">
     <div id="un-room-name-label" style="color:var(--cream);font-weight:700;"></div>
     <div>部屋コード: <span class="room-code" id="un-room-code-label">------</span></div>
-    <div>プレイヤー <span id="un-player-count">0</span>/4</div>
+    <div>プレイヤー <span id="un-player-count">0</span>/8</div>
     <button class="btn small ghost" id="un-leave-btn">退室</button>
   </div>
 
@@ -583,7 +583,7 @@ function genId(){ return "p_"+Math.random().toString(36).slice(2,10); }
 
 function maxSeatsFor(game){
   if(game==="babanuki" || game==="poker") return 8;
-  if(game==="uno") return 4;
+  if(game==="uno") return 8;
   return 5;
 }
 
@@ -630,7 +630,7 @@ document.getElementById("pick-babanuki").addEventListener("click", ()=>{
 document.getElementById("pick-uno").addEventListener("click", ()=>{
   selectedGame = "uno";
   document.getElementById("lobby-title").textContent = "UNO Table";
-  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでUNO(最大4人)。ゲーム本体は準備中だけど、部屋の作成・参加はもう試せるよ。";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでUNO(最大8人)。ゲーム本体は準備中だけど、部屋の作成・参加はもう試せるよ。";
   showScreen("lobby");
 });
 document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
