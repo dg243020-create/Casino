@@ -359,6 +359,7 @@
   }
   .sk-card.matched{ opacity:.32; cursor:default; box-shadow:none; }
   .sk-card.matched:hover{ transform:none; }
+  .sk-card.mismatch{ box-shadow:0 0 0 2px #e08a8a, 0 2px 4px rgba(0,0,0,.4); }
   .sk-card.disabled{ cursor:default; }
   .sk-card.disabled:hover{ transform:none; }
   @media (max-width:600px){
@@ -1037,6 +1038,7 @@ function enterRoom(roomId){
       document.getElementById("sk-room-name-label").textContent = data.roomName || "";
       showScreen("shinkei-table");
       skRender(data);
+      maybeFlipBackMismatch(data);
     } else {
       document.getElementById("room-code-label").textContent = roomId;
       document.getElementById("room-name-label").textContent = data.roomName || "";
@@ -2901,10 +2903,12 @@ function unRenderActions(data){
 
 /* ================================================================
    神経衰弱
-   Part 1: 配置・基本のめくる/判定・ペア成立でもう一度・順位判定
-   (不一致時にしばらく表示したままにする演出はPart2で実装)
+   Part 2: ハズレたペアは少しの間 表示したままにしてから伏せ直す
+   (ブラックジャックのディーラー処理と同じ「タイマー付きトランザクション」方式)
    ================================================================ */
 function skRankOf(card){ return card.slice(0,-1); }
+
+const SK_MISMATCH_DISPLAY_MS = 1300; // ハズレたカードを見せておく時間(ミリ秒)
 
 async function skStartGame(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
@@ -2919,6 +2923,9 @@ async function skStartGame(){
     data.matched = new Array(board.length).fill(false);
     data.matchedBy = new Array(board.length).fill("");  // nullだとFirebaseで消えるので空文字
     data.firstPick = -1;                                 // nullではなく-1を「未選択」とする
+    data.mismatchA = -1;
+    data.mismatchB = -1;
+    data.mismatchUntil = 0;                              // >0の間は「ハズレを見せている最中」でロック
     data.currentIdx = 0;
     data.scores = {};
     order.forEach(pid=>{ data.scores[pid] = 0; });
@@ -2931,9 +2938,6 @@ async function skStartGame(){
 async function skPickCard(index){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
-    const order = data.turnOrder;
-    const pid = order[data.currentIdx];
-    if(pid!==myId) return data;
 
     // Firebaseはnull/未設定のキーを消すので、読み戻し時に必ず補完しておく
     const board = data.board || [];
@@ -2941,7 +2945,17 @@ async function skPickCard(index){
     if(!data.matched) data.matched = new Array(board.length).fill(false);
     if(!data.matchedBy) data.matchedBy = new Array(board.length).fill("");
     if(typeof data.firstPick !== "number") data.firstPick = -1;
+    if(typeof data.mismatchA !== "number") data.mismatchA = -1;
+    if(typeof data.mismatchB !== "number") data.mismatchB = -1;
+    if(typeof data.mismatchUntil !== "number") data.mismatchUntil = 0;
     if(!data.scores) data.scores = {};
+
+    // ハズレたペアを見せている間は誰も操作できない(タイマーで伏せ直されるのを待つ)
+    if(data.mismatchUntil > 0) return data;
+
+    const order = data.turnOrder;
+    const pid = order[data.currentIdx];
+    if(pid!==myId) return data;
 
     if(index<0 || index>=board.length) return data;
     if(data.matched[index] || data.revealed[index]) return data;
@@ -2976,13 +2990,47 @@ async function skPickCard(index){
         data.winnerPid = best;
       }
     } else {
-      data.revealed[i1] = false;
-      data.revealed[i2] = false;
+      // ハズレ: 2枚とも見せたまま少し待つ。伏せ直しと手番送りはskFlipBackMismatchが行う。
       data.firstPick = -1;
-      data.currentIdx = (data.currentIdx + 1) % order.length;
+      data.mismatchA = i1;
+      data.mismatchB = i2;
+      data.mismatchUntil = Date.now() + SK_MISMATCH_DISPLAY_MS;
     }
     return data;
   });
+}
+
+// ハズレたカードを伏せ直し、手番を次の人に進める。
+// 全クライアントがタイマーで試みるが、トランザクションの冪等性により実際に効果があるのは最初の1回だけ。
+async function skFlipBackMismatch(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing") return data;
+    if(!data.mismatchUntil || data.mismatchUntil<=0) return data;
+    if(Date.now() < data.mismatchUntil) return data;
+
+    const revealed = data.revealed || [];
+    if(data.mismatchA>=0 && typeof revealed[data.mismatchA] !== "undefined") revealed[data.mismatchA] = false;
+    if(data.mismatchB>=0 && typeof revealed[data.mismatchB] !== "undefined") revealed[data.mismatchB] = false;
+    data.revealed = revealed;
+    data.mismatchA = -1;
+    data.mismatchB = -1;
+    data.mismatchUntil = 0;
+
+    const order = data.turnOrder || [];
+    if(order.length>0) data.currentIdx = (data.currentIdx + 1) % order.length;
+    return data;
+  });
+}
+
+let skMismatchTimer = null;
+function maybeFlipBackMismatch(data){
+  if(!data || !data.mismatchUntil || data.mismatchUntil<=0){
+    clearTimeout(skMismatchTimer);
+    return;
+  }
+  clearTimeout(skMismatchTimer);
+  const delay = Math.max(0, data.mismatchUntil - Date.now());
+  skMismatchTimer = setTimeout(()=>{ skFlipBackMismatch(); }, delay);
 }
 
 document.getElementById("sk-start-btn").addEventListener("click", ()=>{ skStartGame(); });
@@ -3000,6 +3048,8 @@ function skRender(data){
   const order = data.turnOrder || [];
   document.getElementById("sk-player-count").textContent = order.length;
 
+  const mismatchShowing = !!(data.mismatchUntil && data.mismatchUntil>0);
+
   const statusEl = document.getElementById("sk-status-line");
   if(data.phase==="waiting"){
     statusEl.textContent = "神経衰弱";
@@ -3008,13 +3058,13 @@ function skRender(data){
     statusEl.textContent = w ? `🏆 ${w.name} さんの優勝!(${data.scores[data.winnerPid]||0}組)` : "ゲーム終了!";
   } else {
     const remain = (data.matched||[]).filter(m=>!m).length;
-    statusEl.textContent = `残り${remain}枚`;
+    statusEl.textContent = mismatchShowing ? `残り${remain}枚 ・ ハズレ…めくり直すよ` : `残り${remain}枚`;
   }
 
   const gridEl = document.getElementById("sk-grid");
   gridEl.innerHTML = "";
   const board = data.board || [];
-  const myTurn = data.phase==="playing" && order[data.currentIdx]===myId;
+  const myTurn = data.phase==="playing" && !mismatchShowing && order[data.currentIdx]===myId;
   board.forEach((card,i)=>{
     const cell = document.createElement("div");
     const matched = data.matched && data.matched[i];
@@ -3028,6 +3078,7 @@ function skRender(data){
       cls += " back";
     }
     if(matched) cls += " matched";
+    if(mismatchShowing && (i===data.mismatchA || i===data.mismatchB)) cls += " mismatch";
     const clickable = myTurn && !matched && !revealed;
     if(!clickable) cls += " disabled";
     cell.className = cls;
@@ -3087,6 +3138,11 @@ function skRenderActions(data){
 
   startBtn.style.display = "none";
   const order = data.turnOrder || [];
+  const mismatchShowing = !!(data.mismatchUntil && data.mismatchUntil>0);
+  if(mismatchShowing){
+    msgEl.textContent = "ハズレ… カードを伏せ直しています";
+    return;
+  }
   const myTurn = order[data.currentIdx]===myId;
   if(myTurn){
     msgEl.textContent = data.firstPick < 0 ? "あなたの番です。カードを1枚めくってね" : "もう1枚めくってね";
