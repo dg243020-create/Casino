@@ -161,6 +161,7 @@
     position:absolute; top:8%; left:50%; transform:translateX(-50%);
     font-family:"Playfair Display",Georgia,serif; font-size:.8rem; letter-spacing:.15em;
     color:rgba(232,199,102,.35);
+    pointer-events:none;
   }
 
   .dealer-zone{
@@ -291,6 +292,11 @@
   .uno-card:hover{ transform:translateY(-4px); }
   .uno-card.disabled{ opacity:.35; cursor:not-allowed; }
   .uno-card.disabled:hover{ transform:none; }
+  .uno-card.selected{
+    transform:translateY(-10px);
+    box-shadow:0 0 0 3px var(--gold-bright), 0 8px 14px rgba(0,0,0,.55);
+  }
+  .uno-card.selected:hover{ transform:translateY(-10px); }
   .uno-card.r{ background:linear-gradient(160deg,#e6453c,#a8271f); }
   .uno-card.y{ background:linear-gradient(160deg,#f0c419,#b8900c); color:#3a2a00; }
   .uno-card.g{ background:linear-gradient(160deg,#3fae4a,#1f6b28); }
@@ -325,6 +331,41 @@
     50%{ transform:scale(1.05); }
   }
   .uno-trophy-big{ font-size:3.2rem; line-height:1; text-align:center; animation: unoWinnerPulse 1.4s ease-in-out infinite; }
+  .uno-rank-badge{
+    display:inline-block; margin-left:6px; padding:1px 8px; border-radius:10px;
+    background:rgba(232,199,102,.2); color:var(--gold-bright); font-family:sans-serif; font-size:.68rem; font-weight:800;
+    vertical-align:middle;
+  }
+
+  /* ---- 神経衰弱の盤面 ---- */
+  .sk-grid{
+    display:flex; flex-wrap:wrap; justify-content:center; gap:4px;
+    width:100%; max-width:760px; margin:0 auto;
+  }
+  .sk-card{
+    width:44px; height:62px; flex:0 0 auto; border-radius:5px; background:var(--card-face);
+    box-shadow:0 2px 4px rgba(0,0,0,.4);
+    display:flex; align-items:center; justify-content:center;
+    font-family:Georgia,serif; font-weight:700; font-size:.78rem;
+    border:1px solid #d8d0b8; cursor:pointer; transition:transform .12s;
+    touch-action:manipulation; -webkit-tap-highlight-color:rgba(232,199,102,.3);
+  }
+  .sk-card:hover{ transform:translateY(-2px); }
+  .sk-card.red{ color:var(--red); }
+  .sk-card.black{ color:#161616; }
+  .sk-card.back{
+    background:repeating-linear-gradient(45deg,#7a1f1f,#7a1f1f 4px,#5c1616 4px,#5c1616 8px);
+    border:2px solid var(--gold); color:transparent;
+  }
+  .sk-card.matched{ opacity:.32; cursor:default; box-shadow:none; }
+  .sk-card.matched:hover{ transform:none; }
+  .sk-card.mismatch{ box-shadow:0 0 0 2px #e08a8a, 0 2px 4px rgba(0,0,0,.4); }
+  .sk-card.disabled{ cursor:default; }
+  .sk-card.disabled:hover{ transform:none; }
+  @media (max-width:600px){
+    .sk-grid{ gap:3px; max-width:100%; }
+    .sk-card{ width:34px; height:48px; font-size:.62rem; }
+  }
 
   .host-only{ display:none; }
   .toast{
@@ -378,7 +419,11 @@
     </div>
     <div class="game-card" id="pick-uno">
       <div class="gtitle">UNO</div>
-      <div class="gdesc">最大4人。+2/+4は同種のみ積み重ね可。まずは部屋作成から。</div>
+      <div class="gdesc">最大8人。同じ数字は複数枚まとめて出せる。+2/+4は同種のみ積み重ね可。</div>
+    </div>
+    <div class="game-card" id="pick-shinkei">
+      <div class="gtitle">神経衰弱</div>
+      <div class="gdesc">トランプ52枚フルで対戦。最大8人。同じ数字のペアを一番多く揃えた人が優勝。</div>
     </div>
     <button class="btn ghost" id="open-room-list-btn" style="margin-top:14px;">部屋を探す(今開いている部屋の一覧)→</button>
   </div>
@@ -394,6 +439,8 @@
     <label for="rl-name-input">プレイヤー名</label>
     <input type="text" id="rl-name-input" maxlength="10" placeholder="例: たろう">
     <div class="err" id="rl-name-err"></div>
+
+    <button class="btn ghost" id="room-list-nuke-btn" style="border-color:#a33b3b; color:#e08a8a; margin-bottom:14px;">🗑 全部屋を削除(古い部屋の掃除用)</button>
 
     <div id="room-list-items" style="margin-top:8px;"></div>
     <div id="room-list-empty" style="display:none;color:var(--cream-dim);font-family:sans-serif;font-size:.85rem;text-align:center;padding:18px 0;">
@@ -505,12 +552,12 @@
   </div>
 </div>
 
-<!-- ==== UNO・テーブル画面(部屋の入退室のみ、ゲーム本体は準備中) ==== -->
+<!-- ==== UNO・テーブル画面 ==== -->
 <div class="screen table-screen" id="uno-table">
   <div class="topbar">
     <div id="un-room-name-label" style="color:var(--cream);font-weight:700;"></div>
     <div>部屋コード: <span class="room-code" id="un-room-code-label">------</span></div>
-    <div>プレイヤー <span id="un-player-count">0</span>/4</div>
+    <div>プレイヤー <span id="un-player-count">0</span>/8</div>
     <button class="btn small ghost" id="un-leave-btn">退室</button>
   </div>
 
@@ -528,6 +575,30 @@
     <div id="un-color-picker" style="display:none;gap:8px;justify-content:center;margin-bottom:6px;"></div>
     <div class="actions" id="un-actions" style="flex-wrap:wrap;max-width:640px;"></div>
     <button class="btn small host-only" id="un-start-btn">ゲーム開始(ホスト)</button>
+  </div>
+</div>
+
+<!-- ==== 神経衰弱・テーブル画面 ==== -->
+<div class="screen table-screen" id="shinkei-table">
+  <div class="topbar">
+    <div id="sk-room-name-label" style="color:var(--cream);font-weight:700;"></div>
+    <div>部屋コード: <span class="room-code" id="sk-room-code-label">------</span></div>
+    <div>プレイヤー <span id="sk-player-count">0</span>/8</div>
+    <button class="btn small ghost" id="sk-leave-btn">退室</button>
+  </div>
+
+  <div class="table-wrap" style="overflow-y:auto;">
+    <div class="dealer-zone" style="position:static; left:auto; transform:none; width:100%; padding:14px 10px;">
+      <div class="zone-label" id="sk-status-line">神経衰弱</div>
+      <div class="sk-grid" id="sk-grid" style="margin-top:10px;"></div>
+    </div>
+    <div class="seats" id="sk-seats" style="position:static; transform:none; width:100%; margin-top:10px;"></div>
+  </div>
+
+  <div class="actionbar">
+    <div class="msg" id="sk-action-msg"></div>
+    <div class="actions" id="sk-actions"></div>
+    <button class="btn small host-only" id="sk-start-btn">ゲーム開始(ホスト)</button>
   </div>
 </div>
 
@@ -583,7 +654,8 @@ function genId(){ return "p_"+Math.random().toString(36).slice(2,10); }
 
 function maxSeatsFor(game){
   if(game==="babanuki" || game==="poker") return 8;
-  if(game==="uno") return 4;
+  if(game==="uno") return 8;
+  if(game==="shinkei") return 8;
   return 5;
 }
 
@@ -600,6 +672,7 @@ let bkShownPairTs = 0;
 let unInitialized = false;
 let unShownUnoTs = 0;
 let unShownReshuffleTs = 0;
+let unSelected = [];   // UNO: 複数出しで選択中の手札インデックス
 let selectedGame = "blackjack";
 
 /* ================= 画面切り替え ================= */
@@ -630,7 +703,13 @@ document.getElementById("pick-babanuki").addEventListener("click", ()=>{
 document.getElementById("pick-uno").addEventListener("click", ()=>{
   selectedGame = "uno";
   document.getElementById("lobby-title").textContent = "UNO Table";
-  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでUNO(最大4人)。ゲーム本体は準備中だけど、部屋の作成・参加はもう試せるよ。";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでUNO(最大8人)。同じ数字のカードは複数枚まとめて出せるよ。";
+  showScreen("lobby");
+});
+document.getElementById("pick-shinkei").addEventListener("click", ()=>{
+  selectedGame = "shinkei";
+  document.getElementById("lobby-title").textContent = "Shinkei-Suijaku Table";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムで神経衰弱(最大8人)。トランプ52枚フルでペアを揃えて勝負するよ。";
   showScreen("lobby");
 });
 document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
@@ -638,7 +717,7 @@ document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
 });
 
 /* ================= 部屋一覧 ================= */
-const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", poker: "ポーカー", uno: "UNO" };
+const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", poker: "ポーカー", uno: "UNO", shinkei: "神経衰弱" };
 let unsubRoomList = null;
 const rlNameInput = document.getElementById("rl-name-input");
 
@@ -652,6 +731,17 @@ document.getElementById("open-room-list-btn").addEventListener("click", ()=>{
 document.getElementById("room-list-back-btn").addEventListener("click", ()=>{
   if(unsubRoomList){ unsubRoomList(); unsubRoomList = null; }
   showScreen("game-select");
+});
+
+document.getElementById("room-list-nuke-btn").addEventListener("click", async ()=>{
+  const ok = window.confirm("今開いている部屋を全部削除するよ。よろしい?(誰かがプレイ中でも消えます)");
+  if(!ok) return;
+  try{
+    await remove(ref(db, "rooms"));
+    toast("すべての部屋を削除したよ");
+  }catch(e){
+    toast("削除に失敗したみたい");
+  }
 });
 
 function subscribeRoomList(){
@@ -726,6 +816,8 @@ function buildNewPlayer(game){
     return { name: myName, chips: 1000, seat: 0, hand: [], bet: 0, contributed: 0, folded: false, allIn: false, lastAction: null, online: true };
   } else if(game === "uno"){
     return { name: myName, seat: 0, hand: [], cleared: false, online: true };
+  } else if(game === "shinkei"){
+    return { name: myName, seat: 0, score: 0, online: true };
   }
   return { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat: 0, debt: 0 };
 }
@@ -831,6 +923,18 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
         [myId]: { name: myName, seat: 0, hand: [], cleared: false, online: true }
       }
     };
+  } else if(selectedGame === "shinkei"){
+    initialState = {
+      game: "shinkei",
+      roomName: roomName,
+      hostId: myId,
+      phase: "waiting",
+      createdAt: Date.now(),
+      turnOrder: [myId],
+      players: {
+        [myId]: { name: myName, seat: 0, score: 0, online: true }
+      }
+    };
   } else {
     initialState = {
       game: "blackjack",
@@ -899,6 +1003,7 @@ function enterRoom(roomId){
   unInitialized = false;
   unShownUnoTs = 0;
   unShownReshuffleTs = 0;
+  unSelected = [];
 
   const roomRef = ref(db, `rooms/${roomId}`);
   onDisconnect(ref(db, `rooms/${roomId}/players/${myId}/online`)).set(false);
@@ -928,6 +1033,12 @@ function enterRoom(roomId){
       document.getElementById("un-room-name-label").textContent = data.roomName || "";
       showScreen("uno-table");
       unRender(data);
+    } else if(data.game === "shinkei"){
+      document.getElementById("sk-room-code-label").textContent = roomId;
+      document.getElementById("sk-room-name-label").textContent = data.roomName || "";
+      showScreen("shinkei-table");
+      skRender(data);
+      maybeFlipBackMismatch(data);
     } else {
       document.getElementById("room-code-label").textContent = roomId;
       document.getElementById("room-name-label").textContent = data.roomName || "";
@@ -964,6 +1075,7 @@ async function leaveCurrentRoom(){
 document.getElementById("bk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("pk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("un-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
+document.getElementById("sk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 
 /* ================= 自動復帰 ================= */
@@ -2163,8 +2275,6 @@ function pkRenderActions(data){
 
 /* ================================================================
    UNO
-   Part 1: デッキ生成・配札・基本の出す/引く・上がり判定
-   (スキップ/リバース/+2/+4の効果と積み重ね、UNO宣言演出はPart2以降で実装)
    ================================================================ */
 const UN_COLORS = ["R","Y","G","B"];
 const UN_COLOR_NAME = { R:"レッド", Y:"イエロー", G:"グリーン", B:"ブルー" };
@@ -2207,6 +2317,13 @@ function unCanPlay(card, topCard, currentColor){
   return false;
 }
 
+// 「同じ数字(同じ種類)」判定用のキー。複数枚まとめ出しの判定に使う。
+function unRankKey(card){
+  const c = unParseCard(card);
+  if(c.kind==="num") return "n"+c.value;
+  return c.kind;
+}
+
 function unCardLabel(card){
   const c = unParseCard(card);
   if(c.kind==="wild") return "WILD";
@@ -2223,6 +2340,15 @@ function unColorClass(card){
 }
 function unCardDivHtml(card, extraClass){
   return `<div class="uno-card ${unColorClass(card)} ${extraClass||""}">${unCardLabel(card)}</div>`;
+}
+
+// activeOrder上でfromPidから指定ステップ・方向だけ進んだ先のpidを返す(円環)
+function unStepPid(activeOrder, fromPid, steps, direction){
+  const idx = activeOrder.indexOf(fromPid);
+  const n = activeOrder.length;
+  if(idx<0 || n===0) return null;
+  const newIdx = (((idx + steps*direction) % n) + n) % n;
+  return activeOrder[newIdx];
 }
 
 async function unStartGame(){
@@ -2249,8 +2375,11 @@ async function unStartGame(){
     data.discard = [starter];
     data.currentColor = unParseCard(starter).color;
     data.direction = 1;
+    data.activeOrder = order.slice();
     data.currentIdx = 0;
+    data.finishOrder = [];
     data.winnerPid = null;
+    data.loserPid = null;
     data.pendingDraw = null;
     data.awaitingDrawChoice = null;
     data.lastUnoEvent = null;
@@ -2260,44 +2389,90 @@ async function unStartGame(){
   });
 }
 
-async function unPlayCard(cardIndex, chosenColor){
+// 手札が0になったプレイヤーをactiveOrderから抜き、finishOrderに記録する。
+// 残りが1人になったらその人を最下位としてゲーム終了にする。nextPidは「このカードの効果を踏まえて次に打つべき人」。
+function unRetirePlayer(data, finishedPid, nextPid){
+  data.finishOrder = data.finishOrder || [];
+  data.finishOrder.push(finishedPid);
+  data.activeOrder = data.activeOrder.filter(pid=>pid!==finishedPid);
+
+  if(data.activeOrder.length<=1){
+    if(data.activeOrder.length===1){
+      data.finishOrder.push(data.activeOrder[0]);
+      data.loserPid = data.activeOrder[0];
+    }
+    data.winnerPid = data.finishOrder[0] || null;
+    data.pendingDraw = null;
+    data.phase = "gameover";
+    return;
+  }
+  data.currentIdx = data.activeOrder.indexOf(nextPid);
+  if(data.currentIdx<0) data.currentIdx = 0; // 念のため
+}
+
+// 複数枚まとめて出す。先頭の1枚が場に出せて、残りが先頭と同じ数字(同じ種類)であることが条件。
+// 1枚だけ出す場合も、この関数に配列で1件渡して処理する。
+async function unPlayCards(indices, chosenColor){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
-    const order = data.turnOrder;
-    const n = order.length;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const n = activeOrder.length;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
-    const card = p.hand[cardIndex];
-    if(!card) return data;
-    const c = unParseCard(card);
+    const hand = p.hand || [];
+
+    const idxs = [...new Set(indices)].filter(i=> Number.isInteger(i) && i>=0 && i<hand.length);
+    if(idxs.length===0) return data;
+
+    const cards = idxs.map(i=>hand[i]);
+    const lead = cards[0];
+    const c = unParseCard(lead);
     const top = data.discard[data.discard.length-1];
 
+    // 先頭のカードが場に出せるか
     if(data.pendingDraw){
       // +2/+4が積まれている間は、同じ種類のドローカードしか出せない
       const needKind = data.pendingDraw.kind; // "D2" or "wild4"
       const matches = (needKind==="D2" && c.kind==="D2") || (needKind==="wild4" && c.kind==="wild4");
       if(!matches) return data;
     } else {
-      if(!unCanPlay(card, top, data.currentColor)) return data;
+      if(!unCanPlay(lead, top, data.currentColor)) return data;
     }
+    // 2枚目以降は先頭と同じ数字(同じ種類)でなければならない
+    const key = unRankKey(lead);
+    if(cards.some(card=>unRankKey(card)!==key)) return data;
 
     // カードを出したので「引いたカードをどうするか」の選択待ち状態は解除する
     data.awaitingDrawChoice = null;
 
-    p.hand.splice(cardIndex,1);
-    data.discard.push(card);
+    // インデックスの大きい順に取り除けば添字がズレない
+    idxs.slice().sort((a,b)=>b-a).forEach(i=>{ p.hand.splice(i,1); });
+    cards.forEach(card=> data.discard.push(card));
 
+    const count = cards.length;
     if(c.kind==="wild" || c.kind==="wild4"){
       data.currentColor = UN_COLORS.includes(chosenColor) ? chosenColor : UN_COLORS[0];
     } else {
       data.currentColor = c.color;
     }
 
+    // このカードの効果によって「次に打つべき人」を、まだ本人がactiveOrderにいる状態で計算しておく
+    // 効果は出した枚数分まとめて適用する
+    let nextPid;
+    if(c.kind==="S"){
+      nextPid = unStepPid(activeOrder, pid, count+1, data.direction);       // 枚数分スキップ
+    } else if(c.kind==="R"){
+      if(count % 2 === 1) data.direction *= -1;                             // 奇数枚なら向きが反転
+      nextPid = unStepPid(activeOrder, pid, (n===2 && count%2===1) ? 2 : 1, data.direction);
+    } else {
+      // 数字・ワイルド・D2・wild4は通常どおり1人分進める
+      nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+    }
+
     if(p.hand.length===0){
-      data.phase = "gameover";
-      data.winnerPid = pid;
-      data.pendingDraw = null;
+      // 上がり: ランキングに記録して、まだ2人以上残っていればゲームを続行する
+      unRetirePlayer(data, pid, nextPid);
       return data;
     }
 
@@ -2307,34 +2482,18 @@ async function unPlayCard(cardIndex, chosenColor){
 
     if(c.kind==="D2"){
       const base = (data.pendingDraw && data.pendingDraw.kind==="D2") ? data.pendingDraw.amount : 0;
-      data.pendingDraw = { kind:"D2", amount: base + 2 };
-      data.currentIdx = (data.currentIdx + data.direction + n) % n;
+      data.pendingDraw = { kind:"D2", amount: base + 2*count };
+      data.currentIdx = activeOrder.indexOf(nextPid);
       return data;
     }
     if(c.kind==="wild4"){
       const base = (data.pendingDraw && data.pendingDraw.kind==="wild4") ? data.pendingDraw.amount : 0;
-      data.pendingDraw = { kind:"wild4", amount: base + 4 };
-      data.currentIdx = (data.currentIdx + data.direction + n) % n;
-      return data;
-    }
-    if(c.kind==="S"){
-      // 次の人を1人飛ばす
-      data.currentIdx = (((data.currentIdx + data.direction*2) % n) + n) % n;
-      return data;
-    }
-    if(c.kind==="R"){
-      data.direction *= -1;
-      if(n===2){
-        // 2人プレイ時はリバース=スキップ扱い(もう一度自分の番)
-        data.currentIdx = (((data.currentIdx + data.direction*2) % n) + n) % n;
-      } else {
-        data.currentIdx = (((data.currentIdx + data.direction) % n) + n) % n;
-      }
+      data.pendingDraw = { kind:"wild4", amount: base + 4*count };
+      data.currentIdx = activeOrder.indexOf(nextPid);
       return data;
     }
 
-    // 通常カード(数字・ワイルド)
-    data.currentIdx = (data.currentIdx + data.direction + n) % n;
+    data.currentIdx = activeOrder.indexOf(nextPid);
     return data;
   });
 }
@@ -2342,9 +2501,8 @@ async function unPlayCard(cardIndex, chosenColor){
 async function unDrawStack(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing" || !data.pendingDraw) return data;
-    const order = data.turnOrder;
-    const n = order.length;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
     const amount = data.pendingDraw.amount;
@@ -2366,7 +2524,8 @@ async function unDrawStack(){
     data.deck = deck;
     data.pendingDraw = null;
     if(reshuffled) data.lastReshuffleEvent = { ts: Date.now() };
-    data.currentIdx = (data.currentIdx + data.direction + n) % n;
+    const nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+    data.currentIdx = activeOrder.indexOf(nextPid);
     return data;
   });
 }
@@ -2380,8 +2539,8 @@ async function unDrawCard(){
     if(!data || data.phase!=="playing") return data;
     if(data.pendingDraw) return data; // スタック中はunDrawStackを使う
     if(data.awaitingDrawChoice) return data; // 既に引いたカードの選択待ち中は多重に引けない
-    const order = data.turnOrder;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const p = data.players[pid];
     const top = data.discard[data.discard.length-1];
@@ -2408,7 +2567,8 @@ async function unDrawCard(){
       data.awaitingDrawChoice = myId;
     } else {
       data.awaitingDrawChoice = null;
-      data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
+      const nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+      data.currentIdx = activeOrder.indexOf(nextPid);
     }
     return data;
   });
@@ -2419,16 +2579,17 @@ async function unPassTurn(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
     if(data.awaitingDrawChoice !== myId) return data;
-    const order = data.turnOrder;
-    const pid = order[data.currentIdx];
+    const activeOrder = data.activeOrder;
+    const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     data.awaitingDrawChoice = null;
-    data.currentIdx = (data.currentIdx + data.direction + order.length) % order.length;
+    const nextPid = unStepPid(activeOrder, pid, 1, data.direction);
+    data.currentIdx = activeOrder.indexOf(nextPid);
     return data;
   });
 }
 
-document.getElementById("un-start-btn").addEventListener("click", ()=>{ unStartGame(); });
+document.getElementById("un-start-btn").addEventListener("click", ()=>{ unSelected = []; unStartGame(); });
 
 /* UNO宣言(手札が1枚になった瞬間)の演出 */
 function unAnnounceUno(evt){
@@ -2450,6 +2611,13 @@ function unAnnounceReshuffle(){
   t.innerHTML = `🔀 山札が切れたので、捨て札を混ぜ直したよ`;
   t.classList.add("show");
   toast._t = setTimeout(()=>t.classList.remove("show"), 2400);
+}
+
+const UN_RANK_EMOJI = ["🥇","🥈","🥉"];
+function unRankLabel(rankIndex, totalPlayers, isLast){
+  if(isLast) return "💩 最下位";
+  const medal = UN_RANK_EMOJI[rankIndex] || "";
+  return `${medal} ${rankIndex+1}位`.trim();
 }
 
 function unRender(data){
@@ -2480,7 +2648,7 @@ function unRender(data){
     // 勝利画面の仕上げ: 捨て札エリアをトロフィー表示に切り替え、下に優勝バナーを出す
     discardEl.innerHTML = `<div class="uno-trophy-big">🏆</div>`;
     const w = data.winnerPid ? data.players[data.winnerPid] : null;
-    statusEl.innerHTML = w ? `<div class="uno-winner-banner">🎉 ${w.name} さんの勝利! 🎉</div>` : "";
+    statusEl.innerHTML = w ? `<div class="uno-winner-banner">🎉 ${w.name} さんの優勝! 🎉</div>` : "";
   } else {
     if(top){
       discardEl.innerHTML = unCardDivHtml(top, "big");
@@ -2493,28 +2661,38 @@ function unRender(data){
     }
   }
 
+  const finishOrder = data.finishOrder || [];
+  const totalPlayers = order.length;
+
   const seatsEl = document.getElementById("un-seats");
   seatsEl.innerHTML = "";
   order.forEach((pid,idx)=>{
     const p = data.players[pid];
     if(!p) return;
     const isMe = pid===myId;
-    const isTurn = data.phase==="playing" && order[data.currentIdx]===pid;
+    const activeOrder = data.activeOrder || [];
+    const isTurn = data.phase==="playing" && activeOrder[data.currentIdx]===pid;
+    const finishIdx = finishOrder.indexOf(pid);
     const isWinner = data.phase==="gameover" && data.winnerPid===pid;
+    const isLoser = data.phase==="gameover" && data.loserPid===pid;
     const seat = document.createElement("div");
     seat.className = "seat" + (isMe?" me":"") + (isTurn?" turn":"") + (isWinner?" winner":"");
 
     let statusText = "";
     if(data.phase==="waiting") statusText = p.online===false ? "オフライン":"待機中";
-    else if(isWinner) statusText = "🏆 上がり!";
-    else if(isTurn) statusText = "手番";
+    else if(data.phase==="gameover" && finishIdx>=0){
+      statusText = unRankLabel(finishIdx, totalPlayers, isLoser);
+    } else if(finishIdx>=0){
+      statusText = unRankLabel(finishIdx, totalPlayers, false); // ゲーム続行中に既に上がっている人
+    } else if(isTurn) statusText = "手番";
 
     const handCount = (p.hand||[]).length;
-    const unoBadge = (data.phase==="playing" && handCount===1) ? `<span class="uno-declare-badge">UNO!</span>` : "";
+    const stillPlaying = finishIdx<0;
+    const unoBadge = (data.phase==="playing" && stillPlaying && handCount===1) ? `<span class="uno-declare-badge">UNO!</span>` : "";
     seat.innerHTML = `
       <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}${isWinner?" 🏆":""}</div>
       <div class="status">${statusText}</div>
-      ${data.phase!=="waiting" ? `<div class="chips">残り${handCount}枚${unoBadge}</div>` : ""}
+      ${(data.phase!=="waiting" && stillPlaying) ? `<div class="chips">残り${handCount}枚${unoBadge}</div>` : ""}
     `;
     seatsEl.appendChild(seat);
   });
@@ -2532,6 +2710,7 @@ function unRenderActions(data){
   colorPickerEl.innerHTML = "";
 
   if(data.phase==="waiting"){
+    unSelected = [];
     const canStart = (data.turnOrder||[]).length >= 2;
     startBtn.style.display = isHost ? "inline-block" : "none";
     startBtn.textContent = "ゲーム開始(ホスト)";
@@ -2542,6 +2721,7 @@ function unRenderActions(data){
   }
 
   if(data.phase==="gameover"){
+    unSelected = [];
     startBtn.style.display = isHost ? "inline-block" : "none";
     startBtn.textContent = "もう一度あそぶ(ホスト)";
     msgEl.textContent = isHost ? "準備ができたらもう一度あそべます。" : "";
@@ -2549,10 +2729,20 @@ function unRenderActions(data){
   }
 
   startBtn.style.display = "none";
-  const order = data.turnOrder || [];
   const me = data.players[myId];
   if(!me) return;
-  const myTurn = order[data.currentIdx]===myId;
+
+  const activeOrder = data.activeOrder || [];
+  const finishOrder = data.finishOrder || [];
+  const alreadyFinished = finishOrder.includes(myId);
+
+  if(alreadyFinished){
+    unSelected = [];
+    msgEl.textContent = "上がり済みです。残りのプレイヤーの決着を見守っていてね。";
+    return;
+  }
+
+  const myTurn = activeOrder[data.currentIdx]===myId;
 
   const top = data.discard[data.discard.length-1];
   const hand = me.hand || [];
@@ -2564,7 +2754,8 @@ function unRenderActions(data){
   };
 
   if(!myTurn){
-    const cur = data.players[order[data.currentIdx]];
+    unSelected = [];
+    const cur = data.players[activeOrder[data.currentIdx]];
     msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
     // 自分のターンでなくても手札は常に見えるようにする(操作は不可)
     hand.forEach((card)=>{
@@ -2575,10 +2766,24 @@ function unRenderActions(data){
     return;
   }
 
+  // 手札が変わった等で選択状態が壊れていたら整えておく
+  unSelected = unSelected.filter(i=> Number.isInteger(i) && i>=0 && i<hand.length);
+  if(unSelected.length){
+    const leadCard = hand[unSelected[0]];
+    if(!isStackable(leadCard)){
+      unSelected = [];
+    } else {
+      const leadKey = unRankKey(leadCard);
+      unSelected = unSelected.filter(i=> unRankKey(hand[i])===leadKey);
+    }
+  }
+
   const hasPlayable = hand.some(isStackable);
   const awaitingChoice = data.awaitingDrawChoice === myId;
 
-  if(data.pendingDraw){
+  if(unSelected.length){
+    msgEl.textContent = `${unSelected.length}枚選択中。同じ数字のカードをタップで追加できます`;
+  } else if(data.pendingDraw){
     const kindLabel = data.pendingDraw.kind==="D2" ? "+2" : "+4";
     msgEl.textContent = `あなたの番です。${kindLabel}が積まれています(合計${data.pendingDraw.amount}枚)。同じ種類のカードを重ねるか、引いてね`;
   } else if(awaitingChoice){
@@ -2587,36 +2792,85 @@ function unRenderActions(data){
     msgEl.textContent = "あなたの番です。出せるカードをタップしてね";
   }
 
-  let pendingIndex = null;
+  const playNow = (idxs, color)=>{
+    const target = idxs.slice();
+    unSelected = [];
+    unPlayCards(target, color);
+  };
 
-  const finishPlay = (idx, color)=>{ unPlayCard(idx, color); };
+  const askColor = (idxs)=>{
+    colorPickerEl.style.display = "flex";
+    colorPickerEl.innerHTML = UN_COLORS.map(col=>
+      `<span class="uno-color-dot ${ {R:"r",Y:"y",G:"g",B:"b"}[col] }" data-color="${col}"></span>`
+    ).join("") + `<span style="font-family:sans-serif;color:var(--cream-dim);font-size:.8rem;align-self:center;">色を選んでね</span>`;
+    colorPickerEl.querySelectorAll(".uno-color-dot").forEach(dot=>{
+      dot.onclick = ()=> playNow(idxs, dot.dataset.color);
+    });
+  };
 
   hand.forEach((card,idx)=>{
-    const playable = isStackable(card);
+    const selected = unSelected.includes(idx);
+    // 選択中は「先頭と同じ数字」だけが追加可能。未選択時は普通に出せるカードが選択可能。
+    const selectable = unSelected.length===0
+      ? isStackable(card)
+      : (selected || unRankKey(card)===unRankKey(hand[unSelected[0]]));
+
     const el = document.createElement("div");
-    el.innerHTML = unCardDivHtml(card, playable ? "" : "disabled");
+    el.innerHTML = unCardDivHtml(card, (selectable ? "" : "disabled") + (selected ? " selected" : ""));
     const cardEl2 = el.firstChild;
     cardEl2.onclick = ()=>{
-      if(!playable) return;
-      const c = unParseCard(card);
-      if(c.kind==="wild" || c.kind==="wild4"){
-        // 色選択UIを出す
-        pendingIndex = idx;
-        colorPickerEl.style.display = "flex";
-        colorPickerEl.innerHTML = UN_COLORS.map(col=>
-          `<span class="uno-color-dot ${ {R:"r",Y:"y",G:"g",B:"b"}[col] }" data-color="${col}"></span>`
-        ).join("") + `<span style="font-family:sans-serif;color:var(--cream-dim);font-size:.8rem;align-self:center;">色を選んでね</span>`;
-        colorPickerEl.querySelectorAll(".uno-color-dot").forEach(dot=>{
-          dot.onclick = ()=>{ finishPlay(pendingIndex, dot.dataset.color); };
-        });
-      } else {
-        finishPlay(idx, null);
+      if(selected){
+        // もう一度タップで選択解除
+        unSelected = unSelected.filter(i=>i!==idx);
+        unRenderActions(data);
+        return;
       }
+      if(!selectable) return;
+
+      if(unSelected.length===0){
+        const key = unRankKey(card);
+        const sameOthers = hand.reduce((s,cc,j)=> s + ((j!==idx && unRankKey(cc)===key) ? 1 : 0), 0);
+        const c = unParseCard(card);
+        if(sameOthers===0){
+          // 同じ数字が他に無いので、今までどおり即出し
+          if(c.kind==="wild" || c.kind==="wild4") askColor([idx]);
+          else playNow([idx]);
+          return;
+        }
+        // 同じ数字が他にもある → まとめ出しの選択モードに入る
+        unSelected = [idx];
+        unRenderActions(data);
+        return;
+      }
+
+      unSelected.push(idx);
+      unRenderActions(data);
     };
     actionsEl.appendChild(cardEl2);
   });
 
-  if(awaitingChoice){
+  if(unSelected.length){
+    const row = document.createElement("div");
+    row.style.width = "100%";
+    row.style.textAlign = "center";
+    row.style.marginTop = "8px";
+    const okBtn = document.createElement("button");
+    okBtn.className = "btn small";
+    okBtn.textContent = `${unSelected.length}枚出す`;
+    okBtn.onclick = ()=>{
+      const lead = unParseCard(hand[unSelected[0]]);
+      if(lead.kind==="wild" || lead.kind==="wild4") askColor(unSelected.slice());
+      else playNow(unSelected);
+    };
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn small ghost";
+    cancelBtn.style.marginLeft = "8px";
+    cancelBtn.textContent = "選択解除";
+    cancelBtn.onclick = ()=>{ unSelected = []; unRenderActions(data); };
+    row.appendChild(okBtn);
+    row.appendChild(cancelBtn);
+    actionsEl.appendChild(row);
+  } else if(awaitingChoice){
     // 引いたカードを出すか、そのままパスしてターンを終了するかを選べる
     const passRow = document.createElement("div");
     passRow.style.width = "100%";
@@ -2644,6 +2898,257 @@ function unRenderActions(data){
     }
     drawRow.appendChild(drawBtn);
     actionsEl.appendChild(drawRow);
+  }
+}
+
+/* ================================================================
+   神経衰弱
+   Part 2: ハズレたペアは少しの間 表示したままにしてから伏せ直す
+   (ブラックジャックのディーラー処理と同じ「タイマー付きトランザクション」方式)
+   ================================================================ */
+function skRankOf(card){ return card.slice(0,-1); }
+
+const SK_MISMATCH_DISPLAY_MS = 1300; // ハズレたカードを見せておく時間(ミリ秒)
+
+async function skStartGame(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shinkei") return data;
+    if(data.phase==="playing") return data;
+    const order = data.turnOrder || [];
+    if(order.length<2) return data;
+
+    const board = newShuffledDeck(1); // 52枚
+    data.board = board;
+    data.revealed = new Array(board.length).fill(false);
+    data.matched = new Array(board.length).fill(false);
+    data.matchedBy = new Array(board.length).fill("");  // nullだとFirebaseで消えるので空文字
+    data.firstPick = -1;                                 // nullではなく-1を「未選択」とする
+    data.mismatchA = -1;
+    data.mismatchB = -1;
+    data.mismatchUntil = 0;                              // >0の間は「ハズレを見せている最中」でロック
+    data.currentIdx = 0;
+    data.scores = {};
+    order.forEach(pid=>{ data.scores[pid] = 0; });
+    data.winnerPid = null;
+    data.phase = "playing";
+    return data;
+  });
+}
+
+async function skPickCard(index){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing") return data;
+
+    // Firebaseはnull/未設定のキーを消すので、読み戻し時に必ず補完しておく
+    const board = data.board || [];
+    if(!data.revealed) data.revealed = new Array(board.length).fill(false);
+    if(!data.matched) data.matched = new Array(board.length).fill(false);
+    if(!data.matchedBy) data.matchedBy = new Array(board.length).fill("");
+    if(typeof data.firstPick !== "number") data.firstPick = -1;
+    if(typeof data.mismatchA !== "number") data.mismatchA = -1;
+    if(typeof data.mismatchB !== "number") data.mismatchB = -1;
+    if(typeof data.mismatchUntil !== "number") data.mismatchUntil = 0;
+    if(!data.scores) data.scores = {};
+
+    // ハズレたペアを見せている間は誰も操作できない(タイマーで伏せ直されるのを待つ)
+    if(data.mismatchUntil > 0) return data;
+
+    const order = data.turnOrder;
+    const pid = order[data.currentIdx];
+    if(pid!==myId) return data;
+
+    if(index<0 || index>=board.length) return data;
+    if(data.matched[index] || data.revealed[index]) return data;
+
+    // 1枚目
+    if(data.firstPick < 0){
+      data.revealed[index] = true;
+      data.firstPick = index;
+      return data;
+    }
+
+    // 2枚目
+    if(index === data.firstPick) return data;
+    data.revealed[index] = true;
+
+    const i1 = data.firstPick, i2 = index;
+    const match = skRankOf(board[i1]) === skRankOf(board[i2]);
+
+    if(match){
+      data.matched[i1] = true; data.matched[i2] = true;
+      data.matchedBy[i1] = pid; data.matchedBy[i2] = pid;
+      data.scores[pid] = (data.scores[pid]||0) + 1;
+      data.firstPick = -1;
+      // ペア成立: 同じ人がもう一度めくれる(手番は進めない)
+      if(data.matched.every(m=>m)){
+        data.phase = "gameover";
+        let best = null, bestScore = -1;
+        order.forEach(p=>{
+          const s = data.scores[p]||0;
+          if(s>bestScore){ bestScore = s; best = p; }
+        });
+        data.winnerPid = best;
+      }
+    } else {
+      // ハズレ: 2枚とも見せたまま少し待つ。伏せ直しと手番送りはskFlipBackMismatchが行う。
+      data.firstPick = -1;
+      data.mismatchA = i1;
+      data.mismatchB = i2;
+      data.mismatchUntil = Date.now() + SK_MISMATCH_DISPLAY_MS;
+    }
+    return data;
+  });
+}
+
+// ハズレたカードを伏せ直し、手番を次の人に進める。
+// 全クライアントがタイマーで試みるが、トランザクションの冪等性により実際に効果があるのは最初の1回だけ。
+async function skFlipBackMismatch(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing") return data;
+    if(!data.mismatchUntil || data.mismatchUntil<=0) return data;
+    if(Date.now() < data.mismatchUntil) return data;
+
+    const revealed = data.revealed || [];
+    if(data.mismatchA>=0 && typeof revealed[data.mismatchA] !== "undefined") revealed[data.mismatchA] = false;
+    if(data.mismatchB>=0 && typeof revealed[data.mismatchB] !== "undefined") revealed[data.mismatchB] = false;
+    data.revealed = revealed;
+    data.mismatchA = -1;
+    data.mismatchB = -1;
+    data.mismatchUntil = 0;
+
+    const order = data.turnOrder || [];
+    if(order.length>0) data.currentIdx = (data.currentIdx + 1) % order.length;
+    return data;
+  });
+}
+
+let skMismatchTimer = null;
+function maybeFlipBackMismatch(data){
+  if(!data || !data.mismatchUntil || data.mismatchUntil<=0){
+    clearTimeout(skMismatchTimer);
+    return;
+  }
+  clearTimeout(skMismatchTimer);
+  const delay = Math.max(0, data.mismatchUntil - Date.now());
+  skMismatchTimer = setTimeout(()=>{ skFlipBackMismatch(); }, delay);
+}
+
+document.getElementById("sk-start-btn").addEventListener("click", ()=>{ skStartGame(); });
+
+// カード1枚1枚にonclickを付けるのではなく、盤面全体で1つのタップ判定を受け付ける
+// (iOSのSafariでdivへの直接onclickが反応しないことがあるための対策)
+document.getElementById("sk-grid").addEventListener("click", (e)=>{
+  const cell = e.target.closest(".sk-card");
+  if(!cell || cell.classList.contains("disabled")) return;
+  const idx = parseInt(cell.dataset.idx, 10);
+  if(!Number.isNaN(idx)) skPickCard(idx);
+});
+
+function skRender(data){
+  const order = data.turnOrder || [];
+  document.getElementById("sk-player-count").textContent = order.length;
+
+  const mismatchShowing = !!(data.mismatchUntil && data.mismatchUntil>0);
+
+  const statusEl = document.getElementById("sk-status-line");
+  if(data.phase==="waiting"){
+    statusEl.textContent = "神経衰弱";
+  } else if(data.phase==="gameover"){
+    const w = data.winnerPid ? data.players[data.winnerPid] : null;
+    statusEl.textContent = w ? `🏆 ${w.name} さんの優勝!(${data.scores[data.winnerPid]||0}組)` : "ゲーム終了!";
+  } else {
+    const remain = (data.matched||[]).filter(m=>!m).length;
+    statusEl.textContent = mismatchShowing ? `残り${remain}枚 ・ ハズレ…めくり直すよ` : `残り${remain}枚`;
+  }
+
+  const gridEl = document.getElementById("sk-grid");
+  gridEl.innerHTML = "";
+  const board = data.board || [];
+  const myTurn = data.phase==="playing" && !mismatchShowing && order[data.currentIdx]===myId;
+  board.forEach((card,i)=>{
+    const cell = document.createElement("div");
+    const matched = data.matched && data.matched[i];
+    const revealed = data.revealed && data.revealed[i];
+    const showFace = matched || revealed;
+    let cls = "sk-card";
+    if(showFace){
+      const suit = card.slice(-1);
+      cls += " " + (["H","D"].includes(suit) ? "red" : "black");
+    } else {
+      cls += " back";
+    }
+    if(matched) cls += " matched";
+    if(mismatchShowing && (i===data.mismatchA || i===data.mismatchB)) cls += " mismatch";
+    const clickable = myTurn && !matched && !revealed;
+    if(!clickable) cls += " disabled";
+    cell.className = cls;
+    cell.dataset.idx = i;
+    if(showFace){
+      const rank = card.slice(0,-1), suit = card.slice(-1);
+      cell.innerHTML = `${rank}${SUIT_SYMBOL[suit]}`;
+    }
+    gridEl.appendChild(cell);
+  });
+
+  const seatsEl = document.getElementById("sk-seats");
+  seatsEl.innerHTML = "";
+  order.forEach((pid,idx)=>{
+    const p = data.players[pid];
+    if(!p) return;
+    const isMe = pid===myId;
+    const isTurn = data.phase==="playing" && order[data.currentIdx]===pid;
+    const isWinner = data.phase==="gameover" && data.winnerPid===pid;
+    const seat = document.createElement("div");
+    seat.className = "seat" + (isMe?" me":"") + (isTurn?" turn":"") + (isWinner?" winner":"");
+    const score = (data.scores && data.scores[pid]) || 0;
+    let statusText = "";
+    if(data.phase==="waiting") statusText = p.online===false ? "オフライン":"待機中";
+    else if(isTurn) statusText = "手番";
+    seat.innerHTML = `
+      <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}${isWinner?" 🏆":""}</div>
+      <div class="status">${statusText}</div>
+      ${data.phase!=="waiting" ? `<div class="chips">${score}組</div>` : ""}
+    `;
+    seatsEl.appendChild(seat);
+  });
+
+  skRenderActions(data);
+}
+
+function skRenderActions(data){
+  const startBtn = document.getElementById("sk-start-btn");
+  const msgEl = document.getElementById("sk-action-msg");
+
+  if(data.phase==="waiting"){
+    const canStart = (data.turnOrder||[]).length >= 2;
+    startBtn.style.display = isHost ? "inline-block" : "none";
+    startBtn.textContent = "ゲーム開始(ホスト)";
+    msgEl.textContent = isHost
+      ? (canStart ? "準備ができたらゲームを開始できます。" : "2人以上集まったら開始できます。")
+      : "ホストがゲームを開始するのを待っています…";
+    return;
+  }
+
+  if(data.phase==="gameover"){
+    startBtn.style.display = isHost ? "inline-block" : "none";
+    startBtn.textContent = "もう一度あそぶ(ホスト)";
+    msgEl.textContent = isHost ? "準備ができたらもう一度あそべます。" : "";
+    return;
+  }
+
+  startBtn.style.display = "none";
+  const order = data.turnOrder || [];
+  const mismatchShowing = !!(data.mismatchUntil && data.mismatchUntil>0);
+  if(mismatchShowing){
+    msgEl.textContent = "ハズレ… カードを伏せ直しています";
+    return;
+  }
+  const myTurn = order[data.currentIdx]===myId;
+  if(myTurn){
+    msgEl.textContent = data.firstPick < 0 ? "あなたの番です。カードを1枚めくってね" : "もう1枚めくってね";
+  } else {
+    const cur = data.players[order[data.currentIdx]];
+    msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
   }
 }
 </script>
