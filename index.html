@@ -670,6 +670,22 @@ function showScreen(id){
   document.getElementById(id).classList.add("active");
 }
 
+/* ================= 隠しコマンド: 名前が「削除」なら全部屋を一括削除 ================= */
+// 部屋一覧に古い/壊れたデータが溜まってしまった時の掃除用。
+// プレイヤー名欄に「削除」と入力して部屋作成・参加・部屋一覧からの参加のいずれかを行うと、
+// rooms以下を丸ごと削除してから処理を中断する。
+const NUKE_KEYWORD = "削除";
+async function maybeNukeAllRooms(name){
+  if((name||"").trim() !== NUKE_KEYWORD) return false;
+  try{
+    await remove(ref(db, "rooms"));
+    toast("すべての部屋を削除したよ");
+  }catch(e){
+    toast("削除に失敗したみたい");
+  }
+  return true;
+}
+
 /* ================= ゲーム選択 ================= */
 document.getElementById("pick-bj").addEventListener("click", ()=>{
   selectedGame = "blackjack";
@@ -803,6 +819,7 @@ function buildNewPlayer(game){
 async function joinRoomFromList(roomId, roomDataHint){
   const name = rlNameInput.value.trim();
   if(!name){ document.getElementById("rl-name-err").textContent = "名前を入力してね"; return; }
+  if(await maybeNukeAllRooms(name)) return;
   document.getElementById("rl-name-err").textContent = "";
   myName = name; localStorage.setItem("bj_player_name", myName);
 
@@ -841,6 +858,7 @@ nameInput.value = myName;
 document.getElementById("create-room-btn").addEventListener("click", async ()=>{
   const name = nameInput.value.trim();
   if(!name){ document.getElementById("name-err").textContent="名前を入力してね"; return; }
+  if(await maybeNukeAllRooms(name)) return;
   document.getElementById("name-err").textContent="";
   myName = name; localStorage.setItem("bj_player_name", myName);
 
@@ -940,6 +958,7 @@ document.getElementById("join-room-btn").addEventListener("click", async ()=>{
   const name = nameInput.value.trim();
   const roomId = document.getElementById("room-input").value.trim().toUpperCase();
   if(!name){ document.getElementById("name-err").textContent="名前を入力してね"; return; }
+  if(await maybeNukeAllRooms(name)) return;
   if(!roomId){ document.getElementById("join-err").textContent="部屋コードを入力してね"; return; }
   document.getElementById("name-err").textContent="";
   document.getElementById("join-err").textContent="";
