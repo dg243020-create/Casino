@@ -2866,6 +2866,15 @@ async function skPickCard(index){
 
 document.getElementById("sk-start-btn").addEventListener("click", ()=>{ skStartGame(); });
 
+// カード1枚1枚にonclickを付けるのではなく、盤面全体で1つのタップ判定を受け付ける
+// (iOSのSafariでdivへの直接onclickが反応しないことがあるための対策)
+document.getElementById("sk-grid").addEventListener("click", (e)=>{
+  const cell = e.target.closest(".sk-card");
+  if(!cell || cell.classList.contains("disabled")) return;
+  const idx = parseInt(cell.dataset.idx, 10);
+  if(!Number.isNaN(idx)) skPickCard(idx);
+});
+
 function skRender(data){
   const order = data.turnOrder || [];
   document.getElementById("sk-player-count").textContent = order.length;
@@ -2901,12 +2910,10 @@ function skRender(data){
     const clickable = myTurn && !matched && !revealed;
     if(!clickable) cls += " disabled";
     cell.className = cls;
+    cell.dataset.idx = i;
     if(showFace){
       const rank = card.slice(0,-1), suit = card.slice(-1);
       cell.innerHTML = `${rank}${SUIT_SYMBOL[suit]}`;
-    }
-    if(clickable){
-      cell.onclick = ()=> skPickCard(i);
     }
     gridEl.appendChild(cell);
   });
