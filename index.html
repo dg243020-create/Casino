@@ -733,7 +733,15 @@ document.getElementById("room-list-back-btn").addEventListener("click", ()=>{
   showScreen("game-select");
 });
 
+const ROOM_DELETE_PASSWORD = "0227";
+
 document.getElementById("room-list-nuke-btn").addEventListener("click", async ()=>{
+  const pw = window.prompt("全部屋を削除するにはパスワードを入力してね");
+  if(pw === null) return; // キャンセル
+  if(pw !== ROOM_DELETE_PASSWORD){
+    toast("パスワードが違うみたい");
+    return;
+  }
   const ok = window.confirm("今開いている部屋を全部削除するよ。よろしい?(誰かがプレイ中でも消えます)");
   if(!ok) return;
   try{
