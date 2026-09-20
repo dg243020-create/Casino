@@ -240,47 +240,6 @@
     font-family:sans-serif; font-size:.9rem; color:#777; min-width:140px; text-align:center;
   }
 
-  /* ---- ポーカー用の小さなバッジ・行 ---- */
-  .pk-badge{
-    display:inline-block; font-family:sans-serif; font-size:.62rem; font-weight:800;
-    padding:1px 6px; border-radius:8px; margin-left:4px; vertical-align:middle;
-  }
-  .pk-badge.dealer{ background:var(--gold-bright); color:var(--ink); }
-  .pk-badge.sb{ background:#4a7fd1; color:#eef2ff; }
-  .pk-badge.bb{ background:#a33b3b; color:#ffecec; }
-  .pk-bet{ font-family:sans-serif; font-size:.85rem; color:var(--gold-bright); font-weight:700; margin-top:2px; }
-  .pot-line{
-    font-family:sans-serif; font-size:1.3rem; font-weight:800; color:var(--gold-bright);
-    margin-top:6px; text-shadow:0 0 8px rgba(232,199,102,.5), 0 2px 3px rgba(0,0,0,.7);
-    min-height:1.5rem;
-  }
-  .pk-result-box{
-    font-family:sans-serif; font-size:.85rem; color:var(--cream); text-align:center;
-    max-width:520px; line-height:1.5;
-  }
-
-  /* ---- アクションバー ---- */
-  .actionbar{
-    flex:0 0 auto; width:100%; max-width:980px; padding:10px 8px 2px;
-    display:flex; flex-direction:column; align-items:center; gap:9px;
-  }
-  .actionbar .msg{ font-family:sans-serif; font-size:1.05rem; color:var(--cream-dim); text-align:center; min-height:1.3em;}
-  .actions{ display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
-  .actions .btn{ width:auto; min-width:110px; padding:14px 22px; font-size:1.05rem; }
-  .bet-row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
-  .chip-btn{
-    width:60px; height:60px; border-radius:50%; border:3px solid var(--gold);
-    background:radial-gradient(circle at 35% 30%, #2a2a2a, #111 70%);
-    color:var(--gold-bright); font-family:sans-serif; font-weight:700; font-size:.92rem;
-    cursor:pointer; flex:0 0 auto;
-  }
-  .chip-btn:hover{ filter:brightness(1.2); }
-  .chip-btn.max{
-    border-radius:10px; width:auto; padding:0 16px; height:60px; border-color:var(--red);
-    color:#f0b9b9; font-size:.95rem;
-  }
-  .bet-display{ font-family:sans-serif; font-size:1.3rem; color:var(--gold-bright); min-width:96px; text-align:center; }
-
   /* ---- UNOカード ---- */
   .uno-card{
     width:52px; height:76px; border-radius:8px; margin:3px;
@@ -408,10 +367,6 @@
       <div class="gtitle">ブラックジャック</div>
       <div class="gdesc">ディーラー相手に21を目指す定番ゲーム。全10ラウンドで一番チップが多い人が優勝。</div>
     </div>
-    <div class="game-card" id="pick-poker">
-      <div class="gtitle">ポーカー(テキサスホールデム)</div>
-      <div class="gdesc">共有カードと手札2枚で役を作る定番ポーカー。ブラインド制・ベッティングあり。2〜8人。</div>
-    </div>
     <div class="game-card" id="pick-babanuki">
       <div class="gtitle">ババ抜き</div>
       <div class="gdesc">2〜8人でジョーカーを避けあう定番トランプゲーム。まずは部屋作成から。</div>
@@ -525,33 +480,6 @@
     <div class="msg" id="bk-action-msg"></div>
     <div class="actions" id="bk-actions"></div>
     <button class="btn small host-only" id="bk-start-btn">ゲーム開始(ホスト)</button>
-  </div>
-</div>
-
-<!-- ==== ポーカー・テーブル画面 ==== -->
-<div class="screen table-screen" id="poker-table">
-  <div class="topbar">
-    <div id="pk-room-name-label" style="color:var(--cream);font-weight:700;"></div>
-    <div>部屋コード: <span class="room-code" id="pk-room-code-label">------</span></div>
-    <div id="pk-round-label"></div>
-    <div id="pk-blinds-label"></div>
-    <div id="pk-phase-label">待機中</div>
-    <button class="btn small ghost" id="pk-leave-btn">退室</button>
-  </div>
-
-  <div class="table-wrap">
-    <div class="dealer-zone">
-      <div class="zone-label">COMMUNITY</div>
-      <div class="cards" id="pk-community"></div>
-      <div class="pot-line" id="pk-pot"></div>
-    </div>
-    <div class="seats" id="pk-seats"></div>
-  </div>
-
-  <div class="actionbar">
-    <div class="msg pk-result-box" id="pk-action-msg"></div>
-    <div class="actions" id="pk-actions"></div>
-    <button class="btn small host-only" id="pk-start-btn">ゲーム開始(ホスト)</button>
   </div>
 </div>
 
@@ -683,7 +611,7 @@ function genRoomCode(){
 function genId(){ return "p_"+Math.random().toString(36).slice(2,10); }
 
 function maxSeatsFor(game){
-  if(game==="babanuki" || game==="poker") return 8;
+  if(game==="babanuki") return 8;
   if(game==="uno") return 8;
   if(game==="shinkei") return 8;
   if(game==="daifugo") return 4;
@@ -719,12 +647,6 @@ document.getElementById("pick-bj").addEventListener("click", ()=>{
   document.getElementById("lobby-sub").textContent = "友達とリアルタイムでブラックジャック。全10ラウンドで一番チップが多い人が優勝!名前を入れて部屋を作るか、コードで参加してね。";
   showScreen("lobby");
 });
-document.getElementById("pick-poker").addEventListener("click", ()=>{
-  selectedGame = "poker";
-  document.getElementById("lobby-title").textContent = "Poker Table";
-  document.getElementById("lobby-sub").textContent = "友達とリアルタイムでテキサスホールデム(2〜8人)。ブラインドを払って手札2枚+共有カード5枚で役を競うよ。";
-  showScreen("lobby");
-});
 document.getElementById("pick-babanuki").addEventListener("click", ()=>{
   selectedGame = "babanuki";
   document.getElementById("lobby-title").textContent = "Babanuki Table";
@@ -754,7 +676,7 @@ document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
 });
 
 /* ================= 部屋一覧 ================= */
-const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", poker: "ポーカー", uno: "UNO", shinkei: "神経衰弱", daifugo: "大富豪" };
+const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", uno: "UNO", shinkei: "神経衰弱", daifugo: "大富豪" };
 let unsubRoomList = null;
 const rlNameInput = document.getElementById("rl-name-input");
 
@@ -857,8 +779,6 @@ function renderRoomList(roomsData){
 function buildNewPlayer(game){
   if(game === "babanuki"){
     return { name: myName, seat: 0, hand: [], cleared: false, online: true };
-  } else if(game === "poker"){
-    return { name: myName, chips: 1000, seat: 0, hand: [], bet: 0, contributed: 0, folded: false, allIn: false, lastAction: null, online: true };
   } else if(game === "uno"){
     return { name: myName, seat: 0, hand: [], cleared: false, online: true };
   } else if(game === "shinkei"){
@@ -929,33 +849,6 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
       turnOrder: [myId],
       players: {
         [myId]: { name: myName, seat: 0, hand: [], cleared: false, online: true }
-      }
-    };
-  } else if(selectedGame === "poker"){
-    initialState = {
-      game: "poker",
-      roomName: roomName,
-      hostId: myId,
-      phase: "waiting",
-      createdAt: Date.now(),
-      turnOrder: [myId],
-      smallBlind: 10,
-      bigBlind: 20,
-      round: 0,
-      maxRounds: MAX_ROUNDS,
-      dealerButtonPid: null,
-      sbPid: null,
-      bbPid: null,
-      actOrder: [],
-      toAct: [],
-      currentBet: 0,
-      minRaise: 20,
-      deck: [],
-      communityCards: [],
-      handResult: null,
-      winner: null,
-      players: {
-        [myId]: { name: myName, chips: 1000, seat: 0, hand: [], bet: 0, contributed: 0, folded: false, allIn: false, lastAction: null, online: true }
       }
     };
   } else if(selectedGame === "uno"){
@@ -1089,11 +982,6 @@ function enterRoom(roomId){
       document.getElementById("bk-room-name-label").textContent = data.roomName || "";
       showScreen("babanuki-table");
       bkRender(data);
-    } else if(data.game === "poker"){
-      document.getElementById("pk-room-code-label").textContent = roomId;
-      document.getElementById("pk-room-name-label").textContent = data.roomName || "";
-      showScreen("poker-table");
-      pkRender(data);
     } else if(data.game === "uno"){
       document.getElementById("un-room-code-label").textContent = roomId;
       document.getElementById("un-room-name-label").textContent = data.roomName || "";
@@ -1144,7 +1032,6 @@ async function leaveCurrentRoom(){
 }
 
 document.getElementById("bk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
-document.getElementById("pk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("un-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("sk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("df-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
@@ -1839,509 +1726,6 @@ function bkRenderActions(data){
   } else {
     startBtn.style.display = "none";
     msgEl.textContent = "";
-  }
-}
-
-/* ================================================================
-   ポーカー(テキサスホールデム)
-   ================================================================ */
-const HAND_NAMES = ["ハイカード","ワンペア","ツーペア","スリーカード","ストレート","フラッシュ","フルハウス","フォーカード","ストレートフラッシュ"];
-const PK_RANK_VALUES = { "2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,"10":10,"J":11,"Q":12,"K":13,"A":14 };
-
-function pkCompare(a,b){
-  const len = Math.max(a.length,b.length);
-  for(let i=0;i<len;i++){
-    const av=a[i]||0, bv=b[i]||0;
-    if(av!==bv) return av-bv;
-  }
-  return 0;
-}
-
-function pkEvaluate5(cards){
-  const ranksNum = cards.map(c=>PK_RANK_VALUES[c.slice(0,-1)]).sort((a,b)=>b-a);
-  const suits = cards.map(c=>c.slice(-1));
-  const isFlush = suits.every(s=>s===suits[0]);
-
-  const uniqueRanks = [...new Set(ranksNum)];
-  let isStraight=false, straightHigh=0;
-  if(uniqueRanks.length===5){
-    if(uniqueRanks[0]-uniqueRanks[4]===4){ isStraight=true; straightHigh=uniqueRanks[0]; }
-    else if(uniqueRanks[0]===14 && uniqueRanks[1]===5 && uniqueRanks[2]===4 && uniqueRanks[3]===3 && uniqueRanks[4]===2){
-      isStraight=true; straightHigh=5; // A-2-3-4-5 (ホイール)
-    }
-  }
-
-  const freq={};
-  ranksNum.forEach(r=>freq[r]=(freq[r]||0)+1);
-  const groups = Object.entries(freq).map(([r,c])=>({r:+r,c})).sort((a,b)=> b.c-a.c || b.r-a.r);
-
-  if(isStraight && isFlush) return [8, straightHigh];
-  if(groups[0].c===4) return [7, groups[0].r, groups[1].r];
-  if(groups[0].c===3 && groups[1] && groups[1].c===2) return [6, groups[0].r, groups[1].r];
-  if(isFlush) return [5, ...ranksNum];
-  if(isStraight) return [4, straightHigh];
-  if(groups[0].c===3) return [3, groups[0].r, ...groups.slice(1).map(g=>g.r)];
-  if(groups[0].c===2 && groups[1] && groups[1].c===2) return [2, Math.max(groups[0].r,groups[1].r), Math.min(groups[0].r,groups[1].r), groups[2].r];
-  if(groups[0].c===2) return [1, groups[0].r, ...groups.slice(1).map(g=>g.r)];
-  return [0, ...ranksNum];
-}
-
-function pkEvaluate7(cards7){
-  let best=null;
-  const rec=(start,chosen)=>{
-    if(chosen.length===5){
-      const val = pkEvaluate5(chosen);
-      if(!best || pkCompare(val,best)>0) best = val;
-      return;
-    }
-    for(let i=start;i<cards7.length;i++){
-      chosen.push(cards7[i]);
-      rec(i+1, chosen);
-      chosen.pop();
-    }
-  };
-  rec(0, []);
-  return best;
-}
-
-function pkHandCatName(val){
-  let name = HAND_NAMES[val[0]];
-  if(val[0]===8 && val[1]===14) name = "ロイヤルストレートフラッシュ";
-  return name;
-}
-
-function pkComputeSidePots(players, actOrder){
-  const contribs = actOrder.map(pid=>({pid, amt: players[pid].contributed||0})).filter(c=>c.amt>0);
-  if(contribs.length===0) return [];
-  const levels = [...new Set(contribs.map(c=>c.amt))].sort((a,b)=>a-b);
-  const pots=[]; let prev=0;
-  levels.forEach(level=>{
-    const payers = contribs.filter(c=>c.amt>=level);
-    const amount = (level-prev)*payers.length;
-    if(amount>0){
-      const eligible = payers.filter(c=>!players[c.pid].folded).map(c=>c.pid);
-      pots.push({ amount, eligible });
-    }
-    prev = level;
-  });
-  return pots;
-}
-
-function pkNextAmong(fullOrder, activeArr, afterPid){
-  const idx = fullOrder.indexOf(afterPid);
-  const n = fullOrder.length;
-  for(let i=1;i<=n;i++){
-    const pid = fullOrder[(idx+i)%n];
-    if(activeArr.includes(pid)) return pid;
-  }
-  return activeArr[0];
-}
-
-function pkFirstToActAfter(order, players, anchorPid){
-  const n = order.length;
-  const idx = order.indexOf(anchorPid);
-  for(let i=1;i<=n;i++){
-    const pid = order[(idx+i)%n];
-    if(!players[pid].folded) return pid;
-  }
-  return order[0];
-}
-
-function pkBuildQueueFrom(order, players, firstPid){
-  const n = order.length;
-  const idx = order.indexOf(firstPid);
-  const q=[];
-  for(let i=0;i<n;i++){
-    const pid = order[(idx+i)%n];
-    const p = players[pid];
-    if(!p.folded && !p.allIn) q.push(pid);
-  }
-  return q;
-}
-
-function pkDealCommunity(data, n){
-  for(let i=0;i<n;i++) data.communityCards.push(data.deck.pop());
-}
-
-function pkFinishHand(data){
-  const stillIn = (data.turnOrder||[]).filter(pid=> data.players[pid].chips>0);
-  const maxRounds = data.maxRounds || MAX_ROUNDS;
-  if(stillIn.length<=1 || (data.round||0)>=maxRounds){
-    data.phase = "gameover";
-    if(stillIn.length>=1){
-      data.winner = stillIn.reduce((best,pid)=> (data.players[pid].chips>data.players[best].chips?pid:best), stillIn[0]);
-    } else {
-      data.winner = null;
-    }
-  } else {
-    data.phase = "results";
-  }
-}
-
-function pkAwardFoldWin(data, winnerPid){
-  const total = (data.actOrder||[]).reduce((s,pid)=> s + (data.players[pid].contributed||0), 0);
-  data.players[winnerPid].chips += total;
-  data.handResult = { type:"fold", winnerPid, winnerName: data.players[winnerPid].name, amount: total };
-  data.toAct = [];
-  pkFinishHand(data);
-}
-
-function pkDoShowdown(data){
-  const contenders = (data.actOrder||[]).filter(pid=>!data.players[pid].folded);
-  const results = contenders.map(pid=>({ pid, val: pkEvaluate7([...(data.players[pid].hand||[]), ...data.communityCards]) }));
-  const pots = pkComputeSidePots(data.players, data.actOrder||[]);
-  const payouts = {};
-  pots.forEach(pot=>{
-    const elig = results.filter(r=>pot.eligible.includes(r.pid));
-    if(elig.length===0) return;
-    let best = elig[0];
-    elig.forEach(r=>{ if(pkCompare(r.val,best.val)>0) best=r; });
-    const winners = elig.filter(r=>pkCompare(r.val,best.val)===0);
-    const share = Math.floor(pot.amount/winners.length);
-    let rem = pot.amount - share*winners.length;
-    winners.forEach((r,i)=>{ payouts[r.pid] = (payouts[r.pid]||0) + share + (i<rem?1:0); });
-  });
-  Object.entries(payouts).forEach(([pid,amt])=>{ data.players[pid].chips += amt; });
-  data.handResult = {
-    type:"showdown",
-    payouts,
-    hands: results.map(r=>({ pid:r.pid, name:data.players[r.pid].name, catName: pkHandCatName(r.val) }))
-  };
-  data.toAct = [];
-  pkFinishHand(data);
-}
-
-function pkRunAdvanceStreet(data){
-  while(true){
-    (data.actOrder||[]).forEach(pid=>{ if(!data.players[pid].folded) data.players[pid].bet=0; });
-    data.currentBet = 0;
-    data.minRaise = data.bigBlind;
-
-    if(data.phase==="preflop"){ pkDealCommunity(data,3); data.phase="flop"; }
-    else if(data.phase==="flop"){ pkDealCommunity(data,1); data.phase="turn"; }
-    else if(data.phase==="turn"){ pkDealCommunity(data,1); data.phase="river"; }
-    else { pkDoShowdown(data); return; }
-
-    const stillIn = (data.actOrder||[]).filter(pid=>!data.players[pid].folded);
-    if(stillIn.length<=1){ pkDoShowdown(data); return; }
-    const nonAllin = stillIn.filter(pid=>!data.players[pid].allIn);
-    if(nonAllin.length<=1){ continue; } // 全員オールイン等でベット不要 → そのまま次のカードへ
-
-    const firstPid = pkFirstToActAfter(data.actOrder, data.players, data.dealerButtonPid);
-    data.toAct = pkBuildQueueFrom(data.actOrder, data.players, firstPid);
-    if(data.toAct.length===0){ continue; }
-    return;
-  }
-}
-
-async function pkStartHand(){
-  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
-    if(!data || data.game!=="poker") return data;
-    if(["preflop","flop","turn","river"].includes(data.phase)) return data;
-
-    const turnOrder = data.turnOrder || [];
-
-    if(data.phase==="gameover"){
-      turnOrder.forEach(pid=>{ data.players[pid].chips = 1000; });
-      data.round = 0;
-      data.dealerButtonPid = null;
-      data.winner = null;
-      data.handResult = null;
-      data.phase = "waiting";
-    }
-
-    const activeNow = turnOrder.filter(pid=> data.players[pid] && data.players[pid].chips>0);
-    if(activeNow.length<2) return data;
-
-    let buttonPid;
-    if(!data.dealerButtonPid || !activeNow.includes(data.dealerButtonPid)){
-      buttonPid = activeNow[0];
-    } else {
-      buttonPid = pkNextAmong(turnOrder, activeNow, data.dealerButtonPid);
-    }
-    data.dealerButtonPid = buttonPid;
-    data.actOrder = activeNow;
-
-    turnOrder.forEach(pid=>{
-      const p = data.players[pid];
-      p.hand = []; p.bet = 0; p.contributed = 0; p.lastAction = null;
-      if(activeNow.includes(pid)){ p.folded=false; p.allIn=false; }
-      else { p.folded=true; p.allIn=false; }
-    });
-
-    data.deck = newShuffledDeck(1);
-    data.communityCards = [];
-    data.handResult = null;
-
-    for(let round=0; round<2; round++){
-      activeNow.forEach(pid=>{ data.players[pid].hand.push(data.deck.pop()); });
-    }
-
-    const n = activeNow.length;
-    let sbPid, bbPid, preflopFirstPid;
-    if(n===2){
-      sbPid = buttonPid;
-      bbPid = pkNextAmong(turnOrder, activeNow, buttonPid);
-      preflopFirstPid = sbPid;
-    } else {
-      sbPid = pkNextAmong(turnOrder, activeNow, buttonPid);
-      bbPid = pkNextAmong(turnOrder, activeNow, sbPid);
-      preflopFirstPid = pkNextAmong(turnOrder, activeNow, bbPid);
-    }
-    data.sbPid = sbPid;
-    data.bbPid = bbPid;
-
-    const sbAmt = Math.min(data.smallBlind, data.players[sbPid].chips);
-    data.players[sbPid].chips -= sbAmt; data.players[sbPid].bet = sbAmt; data.players[sbPid].contributed = sbAmt;
-    if(data.players[sbPid].chips===0) data.players[sbPid].allIn = true;
-
-    const bbAmt = Math.min(data.bigBlind, data.players[bbPid].chips);
-    data.players[bbPid].chips -= bbAmt; data.players[bbPid].bet = bbAmt; data.players[bbPid].contributed = bbAmt;
-    if(data.players[bbPid].chips===0) data.players[bbPid].allIn = true;
-
-    data.currentBet = bbAmt;
-    data.minRaise = data.bigBlind;
-    data.phase = "preflop";
-    data.round = (data.round||0) + 1;
-
-    data.toAct = pkBuildQueueFrom(activeNow, data.players, preflopFirstPid);
-    if(data.toAct.length===0){ pkRunAdvanceStreet(data); }
-    return data;
-  });
-}
-
-async function pkAction(action, targetAmount){
-  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
-    if(!data || !["preflop","flop","turn","river"].includes(data.phase)) return data;
-    if(!data.toAct || data.toAct[0] !== myId) return data;
-    const players = data.players;
-    const p = players[myId];
-    if(!p || p.folded || p.allIn) return data;
-    const toCall = (data.currentBet||0) - (p.bet||0);
-
-    if(action==="fold"){
-      p.folded = true;
-      p.lastAction = "フォールド";
-      data.toAct.shift();
-    } else if(action==="check"){
-      if(toCall>0) return data;
-      p.lastAction = "チェック";
-      data.toAct.shift();
-    } else if(action==="call"){
-      const amt = Math.min(toCall, p.chips);
-      p.chips -= amt; p.bet = (p.bet||0)+amt; p.contributed = (p.contributed||0)+amt;
-      if(p.chips===0) p.allIn = true;
-      p.lastAction = amt>0 ? `コール ${amt}` : "チェック";
-      data.toAct.shift();
-    } else if(action==="raise"){
-      const maxTarget = (p.bet||0) + p.chips;
-      const target = Math.min(Math.max(targetAmount||0, p.bet||0), maxTarget);
-      const add = target - (p.bet||0);
-      if(add<=0) return data;
-      p.chips -= add; p.bet = target; p.contributed = (p.contributed||0)+add;
-      if(p.chips===0) p.allIn = true;
-      if(target > (data.currentBet||0)){
-        data.minRaise = Math.max(data.minRaise||data.bigBlind, target - (data.currentBet||0));
-        data.currentBet = target;
-      }
-      p.lastAction = p.allIn ? `オールイン ${target}` : `ベット ${target}`;
-
-      const order = data.actOrder;
-      const idx = order.indexOf(myId);
-      const n = order.length;
-      const q=[];
-      for(let i=1;i<=n;i++){
-        const pid = order[(idx+i)%n];
-        const pp = players[pid];
-        if(pid!==myId && !pp.folded && !pp.allIn) q.push(pid);
-      }
-      data.toAct = q;
-    } else {
-      return data;
-    }
-
-    const stillIn = (data.actOrder||[]).filter(pid=>!players[pid].folded);
-    if(stillIn.length<=1){
-      pkAwardFoldWin(data, stillIn[0]);
-      return data;
-    }
-    if(data.toAct.length===0){
-      pkRunAdvanceStreet(data);
-    }
-    return data;
-  });
-}
-
-document.getElementById("pk-start-btn").addEventListener("click", ()=>{ pkStartHand(); });
-
-function pkResultText(data){
-  if(!data.handResult) return "";
-  if(data.handResult.type==="fold"){
-    return `${data.handResult.winnerName} が ${data.handResult.amount} チップを獲得(相手がフォールド)。`;
-  }
-  const parts = (data.handResult.hands||[]).map(h=>{
-    const amt = data.handResult.payouts ? data.handResult.payouts[h.pid] : 0;
-    return amt ? `${h.name}: ${h.catName}で ${amt} 獲得` : `${h.name}: ${h.catName}`;
-  });
-  return "ショーダウン - " + parts.join(" / ");
-}
-
-function pkRender(data){
-  const phaseNames = { waiting:"待機中", preflop:"プリフロップ", flop:"フロップ", turn:"ターン", river:"リバー", results:"結果", gameover:"ゲーム終了" };
-  document.getElementById("pk-phase-label").textContent = phaseNames[data.phase] || data.phase;
-  document.getElementById("pk-round-label").textContent =
-    data.phase==="waiting" ? "" : `ハンド ${Math.min(data.round||1, data.maxRounds||MAX_ROUNDS)}/${data.maxRounds||MAX_ROUNDS}`;
-  document.getElementById("pk-blinds-label").textContent = `SB ${data.smallBlind} / BB ${data.bigBlind}`;
-
-  const ccEl = document.getElementById("pk-community");
-  ccEl.innerHTML = "";
-  (data.communityCards||[]).forEach(c=> ccEl.appendChild(cardEl(c,false)));
-
-  const potEl = document.getElementById("pk-pot");
-  const totalPot = (data.turnOrder||[]).reduce((s,pid)=> s + ((data.players[pid]&&data.players[pid].contributed)||0), 0);
-  potEl.textContent = totalPot>0 ? `POT ${totalPot}` : "";
-
-  const seatsEl = document.getElementById("pk-seats");
-  seatsEl.innerHTML = "";
-  const order = data.turnOrder || [];
-  const currentActPid = (data.toAct && data.toAct[0]) || null;
-  order.forEach(pid=>{
-    const p = data.players[pid];
-    if(!p) return;
-    const isMe = pid===myId;
-    const isTurn = currentActPid===pid && ["preflop","flop","turn","river"].includes(data.phase);
-    const isWinnerOverall = data.phase==="gameover" && data.winner===pid;
-    const isEliminated = p.chips===0 && !p.allIn;
-    const seat = document.createElement("div");
-    seat.className = "seat"
-      + (isMe ? " me":"")
-      + (isTurn ? " turn":"")
-      + ((p.folded || isEliminated) ? " folded":"")
-      + (isWinnerOverall ? " winner":"");
-
-    let badges = "";
-    if(data.dealerButtonPid===pid) badges += `<span class="pk-badge dealer">D</span>`;
-    if(data.sbPid===pid) badges += `<span class="pk-badge sb">SB</span>`;
-    if(data.bbPid===pid) badges += `<span class="pk-badge bb">BB</span>`;
-
-    const hand = p.hand||[];
-    const revealThis = isMe || (data.handResult && data.handResult.type==="showdown" && !p.folded);
-    let cardsHtml = "";
-    if(hand.length){
-      cardsHtml = hand.map(c=> revealThis ? miniCardHtml(c) : `<div class="card back" style="width:26px;height:36px;"></div>`).join("");
-    }
-
-    let statusText = "";
-    if(isEliminated) statusText = "脱落";
-    else if(p.folded) statusText = "フォールド";
-    else if(p.allIn) statusText = "オールイン";
-    else if(p.lastAction) statusText = p.lastAction;
-
-    const winAmt = data.handResult && data.handResult.payouts && data.handResult.payouts[pid];
-    const resultLine = winAmt ? `<div class="pk-bet" style="color:#8ef0a8;">+${winAmt}</div>` : "";
-    const betLine = (p.bet>0 && ["preflop","flop","turn","river"].includes(data.phase)) ? `<div class="pk-bet">BET ${p.bet}</div>` : "";
-    const hInfo = data.handResult && data.handResult.type==="showdown" ? (data.handResult.hands||[]).find(h=>h.pid===pid) : null;
-    const handCatLine = hInfo ? `<div class="pk-bet" style="color:var(--cream-dim);">${hInfo.catName}</div>` : "";
-
-    seat.innerHTML = `
-      <div class="pname">${p.name}${isMe ? " (自分)":""}${badges}</div>
-      <div class="cards" style="transform:scale(.7);margin:-8px 0;">${cardsHtml}</div>
-      ${betLine}
-      <div class="status">${statusText}</div>
-      ${handCatLine}
-      ${resultLine}
-      <div class="chips">${p.chips} chips</div>
-    `;
-    seatsEl.appendChild(seat);
-  });
-
-  pkRenderActions(data);
-}
-
-function pkRenderActions(data){
-  const actionsEl = document.getElementById("pk-actions");
-  const msgEl = document.getElementById("pk-action-msg");
-  const startBtn = document.getElementById("pk-start-btn");
-  actionsEl.innerHTML = "";
-  msgEl.textContent = "";
-  startBtn.style.display = "none";
-
-  const me = data.players[myId];
-  if(!me) return;
-
-  if(data.phase==="waiting"){
-    const can = (data.turnOrder||[]).length >= 2;
-    if(isHost){ startBtn.style.display="inline-block"; startBtn.textContent="ゲーム開始(ホスト)"; }
-    msgEl.textContent = isHost
-      ? (can ? "準備ができたらゲームを開始できます。" : "2人以上集まったら開始できます。")
-      : "ホストがゲームを開始するのを待っています…";
-    return;
-  }
-
-  if(data.phase==="gameover"){
-    const winner = data.winner ? data.players[data.winner] : null;
-    let txt = data.handResult ? pkResultText(data) : "";
-    txt += winner ? `  優勝は ${winner.name}(${winner.chips} chips)!` : "  ゲーム終了。";
-    msgEl.textContent = txt;
-    if(isHost){ startBtn.style.display="inline-block"; startBtn.textContent="新しいゲームを始める(ホスト)"; }
-    return;
-  }
-
-  if(data.phase==="results"){
-    msgEl.textContent = pkResultText(data);
-    if(isHost){ startBtn.style.display="inline-block"; startBtn.textContent="次のハンドへ(ホスト)"; }
-    return;
-  }
-
-  if(!data.toAct || data.toAct[0]!==myId){
-    const waitingPid = data.toAct && data.toAct[0];
-    const wname = waitingPid && data.players[waitingPid] ? data.players[waitingPid].name : "相手";
-    msgEl.textContent = me.folded ? "フォールド済みです。相手の様子を見ていてね。" : `${wname} の番です…`;
-    return;
-  }
-
-  const toCall = (data.currentBet||0) - (me.bet||0);
-  msgEl.textContent = "あなたの番です";
-
-  const mk = (label, fn, disabled=false)=>{
-    const b = document.createElement("button");
-    b.className = "btn small"; b.textContent = label; b.disabled = disabled;
-    b.onclick = fn; return b;
-  };
-  actionsEl.appendChild(mk("フォールド", ()=>pkAction("fold")));
-  if(toCall<=0){
-    actionsEl.appendChild(mk("チェック", ()=>pkAction("check")));
-  } else {
-    actionsEl.appendChild(mk(`コール ${Math.min(toCall, me.chips)}`, ()=>pkAction("call")));
-  }
-
-  if(me.chips>0){
-    const minRaiseTo = Math.min((data.currentBet||0) + (data.minRaise||data.bigBlind), (me.bet||0) + me.chips);
-    let raiseTo = minRaiseTo;
-    const row = document.createElement("div"); row.className = "bet-row";
-    const disp = document.createElement("div"); disp.className = "bet-display"; disp.textContent = raiseTo + " に";
-    [10,50,100,500].forEach(v=>{
-      const b = document.createElement("button");
-      b.className = "chip-btn"; b.textContent = "+"+v;
-      b.onclick = ()=>{ raiseTo = Math.min(raiseTo+v, (me.bet||0)+me.chips); disp.textContent = raiseTo+" に"; };
-      row.appendChild(b);
-    });
-    const maxBtn = document.createElement("button");
-    maxBtn.className = "chip-btn max"; maxBtn.textContent = "オールイン";
-    maxBtn.onclick = ()=>{ raiseTo = (me.bet||0)+me.chips; disp.textContent = raiseTo+" に"; };
-    row.appendChild(maxBtn);
-    const minBtn = document.createElement("button");
-    minBtn.className = "chip-btn max"; minBtn.textContent = "最小";
-    minBtn.onclick = ()=>{ raiseTo = minRaiseTo; disp.textContent = raiseTo+" に"; };
-    row.appendChild(minBtn);
-    actionsEl.appendChild(row);
-    actionsEl.appendChild(disp);
-    const confirmRow = document.createElement("div"); confirmRow.className = "actions";
-    const okBtn = document.createElement("button");
-    okBtn.className = "btn small"; okBtn.textContent = toCall>0 ? "レイズ確定" : "ベット確定";
-    okBtn.onclick = ()=> pkAction("raise", raiseTo);
-    confirmRow.appendChild(okBtn);
-    actionsEl.appendChild(confirmRow);
   }
 }
 
