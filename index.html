@@ -1068,6 +1068,8 @@ function enterRoom(roomId){
   unShownUnoTs = 0;
   unShownReshuffleTs = 0;
   unSelected = [];
+  dfInitialized = false;
+  dfShownEventTs = 0;
 
   const roomRef = ref(db, `rooms/${roomId}`);
   onDisconnect(ref(db, `rooms/${roomId}/players/${myId}/online`)).set(false);
@@ -3468,6 +3470,7 @@ async function dfPlayCards(indices){
     const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
     const me = data.players[pid];
+    const pname = me.name || "?";
     const hand = (me.hand||[]).slice();
     const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
     if(idxs.length===0) return data;
@@ -3483,13 +3486,19 @@ async function dfPlayCards(indices){
     data.fieldMeta = dfBuildFieldMeta(check.combo);
     data.lastPlayerPid = pid;
 
+    const events = [];
+
     // 革命(4枚以上の同ランク出し)
     if(check.combo.kind==="quad"){
       data.revolution = !data.revolution;
+      events.push(data.revolution
+        ? `${pname}さんが4枚出しで革命を起こした!(強さが逆転)`
+        : `${pname}さんが4枚出しで革命を打ち消した!(強さが元に戻った)`);
     }
     // スペ3返し(革命中にスペードの3を単騎で出すと革命解除)
     if(check.combo.kind==="single" && !check.combo.isJoker && cards[0]==="3S" && data.revolution){
       data.revolution = false;
+      events.push(`${pname}さんのスペード3返し!革命が終わった`);
     }
 
     // 縛り(1枚出しでの簡易実装。2連続で同じマークが出ると、そのマーク以外は出せなくなる)
@@ -3497,7 +3506,10 @@ async function dfPlayCards(indices){
       const suit = dfCardSuit(cards[0]);
       if(data.lastSingleSuit === suit){
         data.suitMatchStreak = (data.suitMatchStreak||0) + 1;
-        if(data.suitMatchStreak>=2) data.lockedSuit = suit;
+        if(data.suitMatchStreak>=2 && data.lockedSuit!==suit){
+          data.lockedSuit = suit;
+          events.push(`${pname}さんの${SUIT_SYMBOL[suit]||suit}が2連続!縛り発生(${SUIT_SYMBOL[suit]||suit}以外は出せません)`);
+        }
       } else {
         data.suitMatchStreak = 1;
       }
@@ -3512,9 +3524,13 @@ async function dfPlayCards(indices){
       data.finishOrder = data.finishOrder || [];
       data.finishOrder.push(pid);
       finished = true;
+      events.push(`${pname}さんが上がりました!(${data.finishOrder.length}番目)`);
     }
 
     const is8Giri = !check.combo.isJoker && check.combo.kind!=="kaidan" && check.combo.rank==="8";
+    if(is8Giri) events.push(`${pname}さんの8切り!場が流れました`);
+
+    if(events.length) data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
 
     let newActiveOrder = (data.activePlayOrder || data.turnOrder).slice();
     if(finished) newActiveOrder = newActiveOrder.filter(p=>p!==pid);
@@ -3560,6 +3576,7 @@ async function dfPassTurn(){
     const activeOrder = data.activePlayOrder || data.turnOrder;
     const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
+    const pname = (data.players[pid]||{}).name || "?";
 
     const passed = (data.passedThisTrick || []).slice();
     if(!passed.includes(pid)) passed.push(pid);
@@ -3578,8 +3595,11 @@ async function dfPassTurn(){
       data.passedThisTrick = [];
       const leaderPid = data.lastPlayerPid;
       data.currentIdx = activeOrder.indexOf(leaderPid);
+      const leaderName = (data.players[leaderPid]||{}).name || "?";
+      data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス / 全員パスで場が流れました。${leaderName}さんの番です` };
     } else {
       data.currentIdx = activeOrder.indexOf(nextPid);
+      data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス` };
     }
     return data;
   });
@@ -3587,6 +3607,8 @@ async function dfPassTurn(){
 
 let dfSelectedReturnIdx = -1; // 献上返礼カード選択用(交換フェーズ中のみ使用)
 let dfSelectedPlayIdxs = [];  // 場に出すカード選択用(プレイ中のみ使用)
+let dfInitialized = false;
+let dfShownEventTs = 0;
 
 function dfComboDescription(fieldMeta){
   if(!fieldMeta) return "";
@@ -3597,6 +3619,14 @@ function dfComboDescription(fieldMeta){
 }
 
 function dfRender(data){
+  if(!dfInitialized){
+    dfShownEventTs = data.lastEvent ? data.lastEvent.ts : 0;
+    dfInitialized = true;
+  } else if(data.lastEvent && data.lastEvent.ts > dfShownEventTs){
+    dfShownEventTs = data.lastEvent.ts;
+    toast(data.lastEvent.text);
+  }
+
   const order = data.turnOrder || [];
   document.getElementById("df-player-count").textContent = order.length;
 
