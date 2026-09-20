@@ -424,6 +424,10 @@
       <div class="gtitle">神経衰弱</div>
       <div class="gdesc">トランプ52枚フルで対戦。最大8人。同じ数字のペアを一番多く揃えた人が優勝。</div>
     </div>
+    <div class="game-card" id="pick-daifugo">
+      <div class="gtitle">大富豪</div>
+      <div class="gdesc">4人固定・全3ラウンド制。8切り・縛り・階段・革命(スペ3返しあり)対応。合計ポイント最高の人が優勝。</div>
+    </div>
     <button class="btn ghost" id="open-room-list-btn" style="margin-top:14px;">部屋を探す(今開いている部屋の一覧)→</button>
   </div>
 </div>
@@ -601,6 +605,33 @@
   </div>
 </div>
 
+<!-- ==== 大富豪・テーブル画面 ==== -->
+<div class="screen table-screen" id="daifugo-table">
+  <div class="topbar">
+    <div id="df-room-name-label" style="color:var(--cream);font-weight:700;"></div>
+    <div>部屋コード: <span class="room-code" id="df-room-code-label">------</span></div>
+    <div>プレイヤー <span id="df-player-count">0</span>/4</div>
+    <div id="df-round-label"></div>
+    <div id="df-phase-label">待機中</div>
+    <button class="btn small ghost" id="df-leave-btn">退室</button>
+  </div>
+
+  <div class="table-wrap">
+    <div class="dealer-zone">
+      <div class="zone-label">FIELD</div>
+      <div class="cards" id="df-field"></div>
+      <div class="pot-line" id="df-field-info" style="font-size:1rem;"></div>
+    </div>
+    <div class="seats" id="df-seats"></div>
+  </div>
+
+  <div class="actionbar">
+    <div class="msg" id="df-action-msg"></div>
+    <div class="actions" id="df-actions" style="flex-wrap:wrap;max-width:640px;"></div>
+    <button class="btn small host-only" id="df-start-btn">ラウンド開始(ホスト)</button>
+  </div>
+</div>
+
 <script type="module">
 import { ref, set, get, onValue, runTransaction, onDisconnect, update, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 const { db } = window.__fb;
@@ -655,6 +686,7 @@ function maxSeatsFor(game){
   if(game==="babanuki" || game==="poker") return 8;
   if(game==="uno") return 8;
   if(game==="shinkei") return 8;
+  if(game==="daifugo") return 4;
   return 5;
 }
 
@@ -711,12 +743,18 @@ document.getElementById("pick-shinkei").addEventListener("click", ()=>{
   document.getElementById("lobby-sub").textContent = "友達とリアルタイムで神経衰弱(最大8人)。トランプ52枚フルでペアを揃えて勝負するよ。";
   showScreen("lobby");
 });
+document.getElementById("pick-daifugo").addEventListener("click", ()=>{
+  selectedGame = "daifugo";
+  document.getElementById("lobby-title").textContent = "Daifugo Table";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムで大富豪(4人固定・全3ラウンド)。8切り・縛り・階段・革命ありで盛り上がるよ。";
+  showScreen("lobby");
+});
 document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
   showScreen("game-select");
 });
 
 /* ================= 部屋一覧 ================= */
-const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", poker: "ポーカー", uno: "UNO", shinkei: "神経衰弱" };
+const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", poker: "ポーカー", uno: "UNO", shinkei: "神経衰弱", daifugo: "大富豪" };
 let unsubRoomList = null;
 const rlNameInput = document.getElementById("rl-name-input");
 
@@ -825,6 +863,8 @@ function buildNewPlayer(game){
     return { name: myName, seat: 0, hand: [], cleared: false, online: true };
   } else if(game === "shinkei"){
     return { name: myName, seat: 0, score: 0, online: true };
+  } else if(game === "daifugo"){
+    return { name: myName, seat: 0, hand: [], score: 0, online: true };
   }
   return { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat: 0, debt: 0 };
 }
@@ -942,6 +982,23 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
         [myId]: { name: myName, seat: 0, score: 0, online: true }
       }
     };
+  } else if(selectedGame === "daifugo"){
+    initialState = {
+      game: "daifugo",
+      roomName: roomName,
+      hostId: myId,
+      phase: "waiting",
+      createdAt: Date.now(),
+      turnOrder: [myId],
+      round: 0,
+      maxRounds: DF_MAX_ROUNDS,
+      finishOrder: [],
+      prevFinishOrder: null,
+      gameWinners: null,
+      players: {
+        [myId]: { name: myName, seat: 0, hand: [], score: 0, online: true }
+      }
+    };
   } else {
     initialState = {
       game: "blackjack",
@@ -1046,6 +1103,11 @@ function enterRoom(roomId){
       showScreen("shinkei-table");
       skRender(data);
       maybeFlipBackMismatch(data);
+    } else if(data.game === "daifugo"){
+      document.getElementById("df-room-code-label").textContent = roomId;
+      document.getElementById("df-room-name-label").textContent = data.roomName || "";
+      showScreen("daifugo-table");
+      dfRender(data);
     } else {
       document.getElementById("room-code-label").textContent = roomId;
       document.getElementById("room-name-label").textContent = data.roomName || "";
@@ -1083,6 +1145,7 @@ document.getElementById("bk-leave-btn").addEventListener("click", ()=>{ leaveCur
 document.getElementById("pk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("un-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("sk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
+document.getElementById("df-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 
 /* ================= 自動復帰 ================= */
@@ -3158,6 +3221,159 @@ function skRenderActions(data){
     msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
   }
 }
+
+/* ================================================================
+   大富豪 - パート1: データ構造 / 配札 / ラウンド管理
+   (場に出す・パスなどの実プレイ処理と、カード交換処理は次のパートで実装予定)
+   ================================================================ */
+const DF_MAX_ROUNDS = 3;
+const DF_PLAYER_COUNT = 4;
+// 強さの順(3が最弱、2が最強。ジョーカーはこの配列の外で別扱い)
+const DF_RANK_ORDER = ["3","4","5","6","7","8","9","10","J","Q","K","A","2"];
+
+function dfNewDeck(){
+  const deck = [];
+  for(const s of SUITS) for(const r of RANKS) deck.push(r+s);
+  deck.push("JK1","JK2"); // ジョーカー2枚
+  for(let i=deck.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [deck[i],deck[j]] = [deck[j],deck[i]];
+  }
+  return deck;
+}
+
+function dfStrength(card){
+  if(card==="JK1" || card==="JK2") return 999; // ジョーカーは常に最強(革命中の扱いは後のパートで調整)
+  return DF_RANK_ORDER.indexOf(card.slice(0,-1));
+}
+
+function dfSortHand(hand){
+  return hand.slice().sort((a,b)=> dfStrength(a)-dfStrength(b));
+}
+
+function dfCardLabel(card){
+  if(card==="JK1" || card==="JK2") return "JOKER";
+  const rank = card.slice(0,-1), suit = card.slice(-1);
+  return rank + (SUIT_SYMBOL[suit]||"");
+}
+function dfCardColorClass(card){
+  if(card==="JK1" || card==="JK2") return "black";
+  const suit = card.slice(-1);
+  return ["H","D"].includes(suit) ? "red" : "black";
+}
+function dfCardHtml(card){
+  const isJoker = card==="JK1" || card==="JK2";
+  return `<div class="card ${dfCardColorClass(card)}" style="width:46px;height:64px;font-size:${isJoker?".62rem":".95rem"};">${dfCardLabel(card)}</div>`;
+}
+
+// 4人ちょうどの部屋で、デッキを4人に均等に配ってラウンドを開始する(暫定: 配札とラウンド管理のみ。実プレイはパート3で実装)
+async function dfStartGame(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="daifugo") return data;
+    const order = data.turnOrder || [];
+    if(order.length !== DF_PLAYER_COUNT) return data; // 4人ちょうど必要
+    const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+    if((data.round||0) >= maxRounds) return data; // 全ラウンド終了済み
+
+    const deck = dfNewDeck();
+    const hands = {}; order.forEach(pid=>hands[pid]=[]);
+    let i=0;
+    while(deck.length){
+      const pid = order[i % order.length];
+      hands[pid].push(deck.pop());
+      i++;
+    }
+    order.forEach(pid=>{
+      data.players[pid].hand = dfSortHand(hands[pid]);
+      if(typeof data.players[pid].score !== "number") data.players[pid].score = 0;
+    });
+
+    data.round = (data.round||0) + 1;
+    data.field = [];
+    data.fieldType = null;
+    data.lockedSuit = null;
+    data.revolution = false;
+    data.currentIdx = 0;
+    data.passCount = 0;
+    data.finishOrder = [];
+    // 「dealt」は配札直後の暫定フェーズ。場に出す/パスなどの実プレイはパート3、
+    // カード交換(献上)はパート2で実装してこのフェーズを置き換える予定。
+    data.phase = "dealt";
+    return data;
+  });
+}
+
+document.getElementById("df-start-btn").addEventListener("click", ()=>{ dfStartGame(); });
+
+function dfRender(data){
+  const order = data.turnOrder || [];
+  document.getElementById("df-player-count").textContent = order.length;
+
+  const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+  document.getElementById("df-round-label").textContent =
+    (data.round||0) > 0 ? `ラウンド ${Math.min(data.round, maxRounds)}/${maxRounds}` : "";
+
+  const phaseNames = { waiting:"待機中", dealt:"配札完了(プレイ機能は準備中)" };
+  document.getElementById("df-phase-label").textContent = phaseNames[data.phase] || data.phase || "";
+
+  // 場札表示(実際に出す処理は次のパートまでは常に空)
+  document.getElementById("df-field").innerHTML = (data.field||[]).map(dfCardHtml).join("");
+  document.getElementById("df-field-info").textContent = data.revolution ? "革命中!" : "";
+
+  const seatsEl = document.getElementById("df-seats");
+  seatsEl.innerHTML = "";
+  order.forEach((pid,idx)=>{
+    const p = data.players[pid];
+    if(!p) return;
+    const isMe = pid===myId;
+    const hand = p.hand || [];
+    const seat = document.createElement("div");
+    seat.className = "seat" + (isMe ? " me":"");
+    seat.innerHTML = `
+      <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}</div>
+      <div class="status">累計 ${p.score||0} pt</div>
+      <div class="chips">${(data.round||0)>0 ? `手札 ${hand.length}枚` : "待機中"}</div>
+    `;
+    seatsEl.appendChild(seat);
+  });
+
+  // 自分の手札はアクションバー領域に大きく表示(操作ボタンは次のパートで追加)
+  const actionsEl = document.getElementById("df-actions");
+  const msgEl = document.getElementById("df-action-msg");
+  actionsEl.innerHTML = "";
+  const me = data.players[myId];
+  if((data.round||0)>0 && me && me.hand && me.hand.length){
+    me.hand.forEach(card=>{
+      const el = document.createElement("div");
+      el.innerHTML = dfCardHtml(card);
+      actionsEl.appendChild(el.firstChild);
+    });
+    msgEl.textContent = "これがあなたの手札です(場に出す操作は次のパートで実装します)";
+  } else if(order.length !== DF_PLAYER_COUNT){
+    msgEl.textContent = isHost
+      ? `4人ちょうど集まったら配札できます(現在${order.length}/4人)`
+      : `4人集まるのを待っています…(現在${order.length}/4人)`;
+  } else if((data.round||0) >= maxRounds){
+    msgEl.textContent = `全${maxRounds}ラウンドの配札テストが完了しました。ポイント集計・優勝判定は次のパートで実装します。`;
+  } else {
+    msgEl.textContent = isHost ? "準備ができたら配札してラウンドを開始できます。" : "ホストが配札するのを待っています…";
+  }
+
+  dfRenderStartButton(data);
+}
+
+function dfRenderStartButton(data){
+  const startBtn = document.getElementById("df-start-btn");
+  const order = data.turnOrder || [];
+  const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+  if(!isHost || order.length !== DF_PLAYER_COUNT || (data.round||0) >= maxRounds){
+    startBtn.style.display = "none";
+    return;
+  }
+  startBtn.style.display = "inline-block";
+  startBtn.textContent = (data.round||0) === 0 ? "配札してラウンド開始(ホスト)" : "次のラウンドを配札(ホスト・テスト用)";
+}
+
 </script>
 </body>
 </html>
