@@ -629,6 +629,7 @@
     <div class="msg" id="df-action-msg"></div>
     <div class="actions" id="df-actions" style="flex-wrap:wrap;max-width:640px;"></div>
     <button class="btn small host-only" id="df-start-btn">ラウンド開始(ホスト)</button>
+    <button class="btn small ghost host-only" id="df-debug-rank-btn" style="display:none;border-color:#4a7fd1;color:#9fc1f0;">🧪(テスト)次ラウンド用の順位をランダム設定</button>
   </div>
 </div>
 
@@ -3296,14 +3297,90 @@ async function dfStartGame(){
     data.currentIdx = 0;
     data.passCount = 0;
     data.finishOrder = [];
-    // 「dealt」は配札直後の暫定フェーズ。場に出す/パスなどの実プレイはパート3、
-    // カード交換(献上)はパート2で実装してこのフェーズを置き換える予定。
-    data.phase = "dealt";
+
+    // カード交換(献上): 前ラウンドの順位があれば実施。無ければ(1ラウンド目など)そのまま配札完了。
+    const prevOrder = data.prevFinishOrder;
+    if(prevOrder && prevOrder.length===4 && prevOrder.every(pid=>order.includes(pid))){
+      const [daifugoPid, fugouPid, hinminPid, daihinminPid] = prevOrder;
+
+      // 大貧民の最強札1枚 → 大富豪へ自動献上
+      const dhHand = data.players[daihinminPid].hand.slice();
+      const givenToDaifugo = dhHand.pop(); // ソート済み配列の末尾 = 最強
+      data.players[daihinminPid].hand = dhHand;
+      data.players[daifugoPid].hand = dfSortHand([...data.players[daifugoPid].hand, givenToDaifugo]);
+
+      // 貧民の2番目に強い札1枚 → 富豪へ自動献上
+      const hnHand = data.players[hinminPid].hand.slice();
+      const secondIdx = hnHand.length>=2 ? hnHand.length-2 : hnHand.length-1;
+      const givenToFugou = hnHand.splice(secondIdx,1)[0];
+      data.players[hinminPid].hand = hnHand;
+      data.players[fugouPid].hand = dfSortHand([...data.players[fugouPid].hand, givenToFugou]);
+
+      data.exchangeInfo = { daifugoPid, fugouPid, hinminPid, daihinminPid, daifugoDone:false, fugouDone:false };
+      data.phase = "exchange";
+    } else {
+      data.exchangeInfo = null;
+      // 「dealt」は配札直後の暫定フェーズ。場に出す/パスなどの実プレイはパート3で実装予定。
+      data.phase = "dealt";
+    }
     return data;
   });
 }
 
 document.getElementById("df-start-btn").addEventListener("click", ()=>{ dfStartGame(); });
+
+// [テスト用] 実際の対戦(パート3・4)が未実装のため、交換ロジックを試せるように
+// ホストが次ラウンド用の順位(大富豪/富豪/貧民/大貧民)をランダムに設定できるようにしておく。
+async function dfDebugSetRandomFinishOrder(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="daifugo" || data.phase!=="dealt") return data;
+    const order = (data.turnOrder||[]).slice();
+    if(order.length !== DF_PLAYER_COUNT) return data;
+    for(let i=order.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [order[i],order[j]] = [order[j],order[i]];
+    }
+    data.prevFinishOrder = order;
+    return data;
+  });
+}
+document.getElementById("df-debug-rank-btn").addEventListener("click", ()=>{ dfDebugSetRandomFinishOrder(); });
+
+// 大富豪/富豪が、献上返礼として渡すカードを1枚選んで確定する
+async function dfSubmitReturnCard(cardIndex){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="exchange" || !data.exchangeInfo) return data;
+    const ex = data.exchangeInfo;
+    let role = null;
+    if(myId===ex.daifugoPid && !ex.daifugoDone) role = "daifugo";
+    else if(myId===ex.fugouPid && !ex.fugouDone) role = "fugou";
+    if(!role) return data;
+
+    const me = data.players[myId];
+    const hand = (me.hand||[]).slice();
+    if(cardIndex<0 || cardIndex>=hand.length) return data;
+    const card = hand.splice(cardIndex,1)[0];
+    me.hand = dfSortHand(hand);
+
+    const targetPid = role==="daifugo" ? ex.daihinminPid : ex.hinminPid;
+    const targetHand = (data.players[targetPid].hand||[]).slice();
+    targetHand.push(card);
+    data.players[targetPid].hand = dfSortHand(targetHand);
+
+    if(role==="daifugo") ex.daifugoDone = true;
+    else ex.fugouDone = true;
+
+    if(ex.daifugoDone && ex.fugouDone){
+      data.exchangeInfo = null;
+      data.phase = "dealt"; // 交換完了 → 実プレイはパート3で実装予定
+    } else {
+      data.exchangeInfo = ex;
+    }
+    return data;
+  });
+}
+
+let dfSelectedReturnIdx = -1; // 献上返礼カード選択用(交換フェーズ中のみ使用)
 
 function dfRender(data){
   const order = data.turnOrder || [];
@@ -3313,12 +3390,21 @@ function dfRender(data){
   document.getElementById("df-round-label").textContent =
     (data.round||0) > 0 ? `ラウンド ${Math.min(data.round, maxRounds)}/${maxRounds}` : "";
 
-  const phaseNames = { waiting:"待機中", dealt:"配札完了(プレイ機能は準備中)" };
+  const phaseNames = { waiting:"待機中", dealt:"配札完了(プレイ機能は準備中)", exchange:"カード交換中" };
   document.getElementById("df-phase-label").textContent = phaseNames[data.phase] || data.phase || "";
+
+  if(data.phase!=="exchange") dfSelectedReturnIdx = -1;
 
   // 場札表示(実際に出す処理は次のパートまでは常に空)
   document.getElementById("df-field").innerHTML = (data.field||[]).map(dfCardHtml).join("");
-  document.getElementById("df-field-info").textContent = data.revolution ? "革命中!" : "";
+  const infoEl = document.getElementById("df-field-info");
+  if(data.phase==="exchange" && data.exchangeInfo){
+    const ex = data.exchangeInfo;
+    const nm = pid => (data.players[pid]||{}).name || "?";
+    infoEl.textContent = `献上: 大貧民${nm(ex.daihinminPid)}→大富豪${nm(ex.daifugoPid)} / 貧民${nm(ex.hinminPid)}→富豪${nm(ex.fugouPid)}`;
+  } else {
+    infoEl.textContent = data.revolution ? "革命中!" : "";
+  }
 
   const seatsEl = document.getElementById("df-seats");
   seatsEl.innerHTML = "";
@@ -3327,22 +3413,87 @@ function dfRender(data){
     if(!p) return;
     const isMe = pid===myId;
     const hand = p.hand || [];
+    let rankTag = "";
+    if(data.exchangeInfo){
+      const ex = data.exchangeInfo;
+      if(pid===ex.daifugoPid) rankTag = " (大富豪)";
+      else if(pid===ex.fugouPid) rankTag = " (富豪)";
+      else if(pid===ex.hinminPid) rankTag = " (貧民)";
+      else if(pid===ex.daihinminPid) rankTag = " (大貧民)";
+    }
     const seat = document.createElement("div");
     seat.className = "seat" + (isMe ? " me":"");
     seat.innerHTML = `
-      <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}</div>
+      <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}${rankTag}</div>
       <div class="status">累計 ${p.score||0} pt</div>
       <div class="chips">${(data.round||0)>0 ? `手札 ${hand.length}枚` : "待機中"}</div>
     `;
     seatsEl.appendChild(seat);
   });
 
-  // 自分の手札はアクションバー領域に大きく表示(操作ボタンは次のパートで追加)
+  dfRenderActions(data);
+  dfRenderStartButton(data);
+  dfRenderDebugButton(data);
+}
+
+function dfRenderActions(data){
   const actionsEl = document.getElementById("df-actions");
   const msgEl = document.getElementById("df-action-msg");
   actionsEl.innerHTML = "";
   const me = data.players[myId];
-  if((data.round||0)>0 && me && me.hand && me.hand.length){
+  if(!me) return;
+  const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+  const order = data.turnOrder || [];
+
+  if(data.phase==="exchange" && data.exchangeInfo){
+    const ex = data.exchangeInfo;
+    let role = null;
+    if(myId===ex.daifugoPid) role = ex.daifugoDone ? "daifugo-done" : "daifugo-return";
+    else if(myId===ex.fugouPid) role = ex.fugouDone ? "fugou-done" : "fugou-return";
+    else if(myId===ex.daihinminPid) role = "daihinmin-wait";
+    else if(myId===ex.hinminPid) role = "hinmin-wait";
+
+    if(role==="daifugo-return" || role==="fugou-return"){
+      const partnerLabel = role==="daifugo-return" ? "大貧民" : "貧民";
+      msgEl.textContent = `献上されたカードが手札に加わりました。${partnerLabel}に返す1枚を選んでね`;
+      const hand = me.hand||[];
+      hand.forEach((card,idx)=>{
+        const selected = dfSelectedReturnIdx===idx;
+        const el = document.createElement("div");
+        el.innerHTML = dfCardHtml(card);
+        const cardDiv = el.firstChild;
+        cardDiv.style.cursor = "pointer";
+        cardDiv.style.margin = "3px";
+        if(selected){ cardDiv.style.boxShadow = "0 0 0 3px var(--gold-bright)"; cardDiv.style.transform = "translateY(-8px)"; }
+        cardDiv.onclick = ()=>{ dfSelectedReturnIdx = (dfSelectedReturnIdx===idx ? -1 : idx); dfRenderActions(data); };
+        actionsEl.appendChild(cardDiv);
+      });
+      if(dfSelectedReturnIdx>=0){
+        const row = document.createElement("div");
+        row.style.width="100%"; row.style.textAlign="center"; row.style.marginTop="10px";
+        const okBtn = document.createElement("button");
+        okBtn.className = "btn small"; okBtn.textContent = "このカードを渡す";
+        okBtn.onclick = ()=>{ const idx=dfSelectedReturnIdx; dfSelectedReturnIdx=-1; dfSubmitReturnCard(idx); };
+        row.appendChild(okBtn);
+        actionsEl.appendChild(row);
+      }
+      return;
+    }
+    if(role==="daifugo-done" || role==="fugou-done"){
+      msgEl.textContent = "お返しを渡しました。相手の操作を待っています…";
+      (me.hand||[]).forEach(card=>{ const el=document.createElement("div"); el.innerHTML=dfCardHtml(card); actionsEl.appendChild(el.firstChild); });
+      return;
+    }
+    if(role==="daihinmin-wait" || role==="hinmin-wait"){
+      msgEl.textContent = "カードを1枚献上しました。相手からのお返しを待っています…";
+      (me.hand||[]).forEach(card=>{ const el=document.createElement("div"); el.innerHTML=dfCardHtml(card); actionsEl.appendChild(el.firstChild); });
+      return;
+    }
+    msgEl.textContent = "カード交換中です…";
+    return;
+  }
+
+  if((data.round||0)>0 && me.hand && me.hand.length){
     me.hand.forEach(card=>{
       const el = document.createElement("div");
       el.innerHTML = dfCardHtml(card);
@@ -3358,21 +3509,28 @@ function dfRender(data){
   } else {
     msgEl.textContent = isHost ? "準備ができたら配札してラウンドを開始できます。" : "ホストが配札するのを待っています…";
   }
-
-  dfRenderStartButton(data);
 }
 
 function dfRenderStartButton(data){
   const startBtn = document.getElementById("df-start-btn");
   const order = data.turnOrder || [];
   const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
-  if(!isHost || order.length !== DF_PLAYER_COUNT || (data.round||0) >= maxRounds){
+  if(!isHost || order.length !== DF_PLAYER_COUNT || (data.round||0) >= maxRounds || data.phase==="exchange"){
     startBtn.style.display = "none";
     return;
   }
   startBtn.style.display = "inline-block";
   startBtn.textContent = (data.round||0) === 0 ? "配札してラウンド開始(ホスト)" : "次のラウンドを配札(ホスト・テスト用)";
 }
+
+function dfRenderDebugButton(data){
+  const btn = document.getElementById("df-debug-rank-btn");
+  const order = data.turnOrder || [];
+  const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+  const canDebug = isHost && data.phase==="dealt" && order.length===DF_PLAYER_COUNT && (data.round||0) < maxRounds;
+  btn.style.display = canDebug ? "inline-block" : "none";
+}
+
 
 </script>
 </body>
