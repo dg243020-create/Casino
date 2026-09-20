@@ -3539,7 +3539,23 @@ async function dfPlayCards(indices){
     if(newActiveOrder.length<=1){
       if(newActiveOrder.length===1) data.finishOrder.push(newActiveOrder[0]);
       data.prevFinishOrder = data.finishOrder.slice();
-      data.phase = "roundover";
+
+      // ポイント加算: 大富豪+2, 富豪+1, 貧民0, 大貧民-1
+      const pointsByPlace = [2,1,0,-1];
+      data.finishOrder.forEach((fpid, i)=>{
+        data.players[fpid].score = (data.players[fpid].score||0) + (pointsByPlace[i]||0);
+      });
+
+      const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+      if((data.round||0) >= maxRounds){
+        let maxScore = -Infinity;
+        (data.turnOrder||[]).forEach(p=>{ const s=data.players[p].score||0; if(s>maxScore) maxScore=s; });
+        data.gameWinners = (data.turnOrder||[]).filter(p=> (data.players[p].score||0)===maxScore);
+        data.phase = "gameover";
+      } else {
+        data.phase = "roundover";
+      }
+
       data.field = []; data.fieldMeta = null;
       data.passedThisTrick = [];
       return data;
