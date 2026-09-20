@@ -299,7 +299,7 @@
   /* ---- 神経衰弱の盤面 ---- */
   .sk-grid{
     display:grid; grid-template-columns:repeat(13, 1fr); gap:6px;
-    width:min(700px, 94vw);
+    width:100%; max-width:700px;
   }
   .sk-card{
     width:100%; aspect-ratio:44/62; border-radius:5px; background:var(--card-face);
@@ -322,7 +322,13 @@
   .sk-card.disabled{ cursor:default; }
   .sk-card.disabled:hover{ transform:none; }
   @media (max-width:600px){
-    .sk-grid{ gap:3px; }
+    /* スマホでは列数を減らして(13→8)行を増やし、横はみ出しを防ぐ */
+    .sk-grid{ grid-template-columns:repeat(8, 1fr); gap:4px; }
+    .sk-card{ font-size:.6rem; }
+    #shinkei-table .seat{ min-width:74px; padding:5px 7px; gap:2px; }
+    #shinkei-table .seat .pname{ font-size:.72rem; }
+    #shinkei-table .seat .status{ font-size:.6rem; }
+    #shinkei-table .seat .chips{ font-size:.66rem; }
   }
 
   .host-only{ display:none; }
