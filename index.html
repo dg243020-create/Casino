@@ -412,7 +412,7 @@
     </div>
     <div class="game-card" id="pick-daifugo">
       <div class="gtitle">大富豪</div>
-      <div class="gdesc">4人固定・全3ラウンド制。8切り・縛り・階段・革命(スペ3返しあり)対応。合計ポイント最高の人が優勝。</div>
+      <div class="gdesc">4人固定・全3ラウンド制。8切り・11バック・7渡し・縛り・階段・革命(スペ3返しあり)・都落ち・ジョーカー代用に対応。合計ポイント最高の人が優勝。</div>
     </div>
     <button class="btn ghost" id="open-room-list-btn" style="margin-top:14px;">部屋を探す(今開いている部屋の一覧)→</button>
   </div>
@@ -699,7 +699,7 @@ document.getElementById("pick-shinkei").addEventListener("click", ()=>{
 document.getElementById("pick-daifugo").addEventListener("click", ()=>{
   selectedGame = "daifugo";
   document.getElementById("lobby-title").textContent = "Daifugo Table";
-  document.getElementById("lobby-sub").textContent = "友達とリアルタイムで大富豪(4人固定・全3ラウンド)。8切り・縛り・階段・革命ありで盛り上がるよ。";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムで大富豪(4人固定・全3ラウンド)。8切り・11バック・7渡し・都落ちなどのルール入りで盛り上がるよ。";
   showScreen("lobby");
 });
 document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
@@ -2691,6 +2691,11 @@ function dfSetupPlayOrder(data, order){
   } else {
     starterPid = order.find(pid => (data.players[pid].hand||[]).includes("3S")) || order[0];
   }
+  // 都落ちの対象 = 前ラウンドの大富豪(1ラウンド目は無し)
+  data.miyakoTarget = (data.prevFinishOrder && data.prevFinishOrder.length===4) ? data.prevFinishOrder[0] : null;
+  data.fallenPid = null;
+  data.pendingSevenPass = null;
+  data.jBack = false;
   data.activePlayOrder = order.slice();
   data.currentIdx = data.activePlayOrder.indexOf(starterPid);
   data.field = [];
@@ -2708,9 +2713,18 @@ function dfSetupPlayOrder(data, order){
 async function dfStartGame(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.game!=="daifugo") return data;
-    if(data.phase && data.phase!=="waiting" && data.phase!=="roundover") return data; // プレイ中/交換中は不可
     const order = data.turnOrder || [];
     if(order.length !== DF_PLAYER_COUNT) return data; // 4人ちょうど必要
+    if(data.phase==="gameover"){
+      // 新しいゲームとして最初からやり直す
+      order.forEach(pid=>{ if(data.players[pid]) data.players[pid].score = 0; });
+      data.round = 0;
+      data.prevFinishOrder = null;
+      data.gameWinners = null;
+      data.exchangeInfo = null;
+      data.phase = "waiting";
+    }
+    if(data.phase && data.phase!=="waiting" && data.phase!=="roundover") return data; // プレイ中/交換中は不可
     const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
     if((data.round||0) >= maxRounds) return data; // 全ラウンド終了済み
 
@@ -2804,21 +2818,34 @@ function dfEffectiveIndex(rank, revolution){
 }
 
 // 選んだカード群からコンボの種類を判定する(不正な組み合わせは null)
+// ジョーカーは「同じ数字の組(ペア/3枚/4枚)」の中では、その数字の代わりとして使える。
 function dfClassifyCombo(cards){
   if(cards.length===0) return null;
-  if(cards.some(dfIsJoker)){
+  const kindByCount = {1:"single", 2:"pair", 3:"triple", 4:"quad"};
+  const jokers = cards.filter(dfIsJoker);
+  const normals = cards.filter(c=>!dfIsJoker(c));
+
+  if(jokers.length>0){
     if(cards.length===1) return { kind:"single", isJoker:true };
-    return null; // ジョーカーを含む複数枚出しは非対応
+    if(normals.length===0){
+      // ジョーカー2枚出し = 最強のペア
+      return cards.length===2 ? { kind:"pair", rank:"JOKER", count:2, jokerCount:2 } : null;
+    }
+    const r0 = dfCardRank(normals[0]);
+    if(!normals.every(c=>dfCardRank(c)===r0)) return null; // ジョーカー以外は同じ数字だけ
+    const kind = kindByCount[cards.length];
+    if(!kind) return null;
+    return { kind, rank:r0, count:cards.length, jokerCount:jokers.length };
   }
+
   const ranks = cards.map(dfCardRank);
   const suits = cards.map(dfCardSuit);
   if(ranks.every(r=>r===ranks[0])){
-    const kindByCount = {1:"single", 2:"pair", 3:"triple", 4:"quad"};
     const kind = kindByCount[cards.length];
     if(!kind) return null;
     return { kind, rank: ranks[0], count: cards.length };
   }
-  // 階段判定: 同じマークで連番3枚以上
+  // 階段判定: 同じマークで連番3枚以上(ジョーカーは混ぜられない)
   if(suits.every(s=>s===suits[0]) && cards.length>=3){
     const idxs = ranks.map(r=>DF_RANK_ORDER.indexOf(r));
     if(idxs.includes(-1)) return null;
@@ -2834,7 +2861,7 @@ function dfClassifyCombo(cards){
 }
 
 function dfComboStrength(combo, revolution){
-  if(combo.isJoker) return Infinity;
+  if(combo.isJoker || combo.rank==="JOKER") return Infinity;
   if(combo.kind==="kaidan") return dfEffectiveIndex(combo.topRank, revolution);
   return dfEffectiveIndex(combo.rank, revolution);
 }
@@ -2844,6 +2871,9 @@ function dfBuildFieldMeta(combo){
   if(combo.kind==="kaidan") return { kind:"kaidan", length:combo.length, topRank:combo.topRank };
   return { kind:combo.kind, rank:combo.rank };
 }
+
+// 実際に効いている強さの向き。革命と11バックはどちらも「逆転」で、両方かかると元に戻る。
+function dfEffRev(data){ return !!data.revolution !== !!data.jBack; }
 
 // 場に出せるかどうかを判定する(場が空なら自由にリード可)
 function dfValidatePlay(data, cards){
@@ -2862,9 +2892,10 @@ function dfValidatePlay(data, cards){
   if(combo.kind !== field.kind) return { ok:false, reason:"kind-mismatch" };
   if(combo.kind==="kaidan" && combo.length !== field.length) return { ok:false, reason:"length-mismatch" };
 
-  const myStrength = dfComboStrength(combo, data.revolution);
-  const fieldStrength = field.isJoker ? Infinity
-    : (field.kind==="kaidan" ? dfEffectiveIndex(field.topRank, data.revolution) : dfEffectiveIndex(field.rank, data.revolution));
+  const rev = dfEffRev(data);
+  const myStrength = dfComboStrength(combo, rev);
+  const fieldStrength = (field.isJoker || field.rank==="JOKER") ? Infinity
+    : (field.kind==="kaidan" ? dfEffectiveIndex(field.topRank, rev) : dfEffectiveIndex(field.rank, rev));
   if(!(myStrength > fieldStrength)) return { ok:false, reason:"too-weak" };
   return { ok:true, combo };
 }
@@ -2878,9 +2909,85 @@ function dfFindNextActive(fullOrder, activeOrder, fromPid, skipList){
   return null;
 }
 
+// 場を流す(新しいトリックの開始)。縛りと11バックはここで解除される。
+function dfClearTrick(data){
+  data.field = [];
+  data.fieldMeta = null;
+  data.lockedSuit = null;
+  data.suitMatchStreak = 0;
+  data.lastSingleSuit = null;
+  data.jBack = false;
+  data.passedThisTrick = [];
+}
+
+// 出した後(7渡しがある時は渡し終わった後)の共通処理:
+// 上がり判定 → 都落ち判定 → ラウンド終了判定 → 次の手番へ。
+function dfAfterPlay(data, pid, is8Giri, finished, events){
+  const fullOrder = data.turnOrder;
+  const nm = (p)=> (data.players[p]||{}).name || "?";
+  let newActive = (data.activePlayOrder || fullOrder).slice();
+  data.finishOrder = data.finishOrder || [];
+
+  if(finished){
+    data.finishOrder.push(pid);
+    newActive = newActive.filter(p=>p!==pid);
+    events.push(`${nm(pid)}さんが上がりました!(${data.finishOrder.length}番目)`);
+
+    // 都落ち: 前ラウンドの大富豪が1番に上がれなかったら、その場で大貧民に落ちる
+    const target = data.miyakoTarget;
+    if(data.finishOrder.length===1 && target && target!==pid && newActive.includes(target)){
+      data.fallenPid = target;
+      newActive = newActive.filter(p=>p!==target);
+      events.push(`都落ち!前ラウンドの大富豪${nm(target)}さんは大貧民になりました`);
+    }
+  }
+  data.activePlayOrder = newActive;
+
+  if(newActive.length<=1){
+    // ラウンド終了: 残った1人は次の順位、都落ちした人は必ず最下位
+    if(newActive.length===1) data.finishOrder.push(newActive[0]);
+    if(data.fallenPid && !data.finishOrder.includes(data.fallenPid)) data.finishOrder.push(data.fallenPid);
+    data.prevFinishOrder = data.finishOrder.slice();
+
+    // ポイント加算: 大富豪+2, 富豪+1, 貧民0, 大貧民-1
+    const pointsByPlace = [2,1,0,-1];
+    data.finishOrder.forEach((fpid, i)=>{
+      data.players[fpid].score = (data.players[fpid].score||0) + (pointsByPlace[i]||0);
+    });
+
+    const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
+    if((data.round||0) >= maxRounds){
+      let maxScore = -Infinity;
+      fullOrder.forEach(p=>{ const s=data.players[p].score||0; if(s>maxScore) maxScore=s; });
+      data.gameWinners = fullOrder.filter(p=> (data.players[p].score||0)===maxScore);
+      data.phase = "gameover";
+    } else {
+      data.phase = "roundover";
+    }
+    dfClearTrick(data);
+    data.pendingSevenPass = null;
+    return;
+  }
+
+  if(is8Giri || finished){
+    dfClearTrick(data);
+    if(!finished){
+      data.currentIdx = newActive.indexOf(pid); // 8切りは出した本人がそのままリード
+    } else {
+      const nextPid = dfFindNextActive(fullOrder, newActive, pid, []);
+      data.currentIdx = newActive.indexOf(nextPid !== null ? nextPid : newActive[0]);
+    }
+  } else {
+    const passed = data.passedThisTrick || [];
+    const nextPid = dfFindNextActive(fullOrder, newActive, pid, passed);
+    data.currentIdx = newActive.indexOf(nextPid !== null ? nextPid : pid);
+  }
+}
+
 async function dfPlayCards(indices){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
+    if(data.pendingSevenPass) return data; // 7渡しのカード選択中は出せない
     const activeOrder = data.activePlayOrder || data.turnOrder;
     const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
@@ -2893,31 +3000,44 @@ async function dfPlayCards(indices){
 
     const check = dfValidatePlay(data, cards);
     if(!check.ok) return data; // 不正な出し方は無視
+    const combo = check.combo;
 
     idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
     me.hand = hand;
 
     data.field = cards;
-    data.fieldMeta = dfBuildFieldMeta(check.combo);
+    data.fieldMeta = dfBuildFieldMeta(combo);
     data.lastPlayerPid = pid;
 
     const events = [];
+    const isSet = !combo.isJoker && combo.kind!=="kaidan"; // 同じ数字の組(単騎・ペア・3枚・4枚)
 
-    // 革命(4枚以上の同ランク出し)
-    if(check.combo.kind==="quad"){
+    if(combo.jokerCount && combo.rank!=="JOKER"){
+      events.push(`${pname}さんがジョーカーを${combo.rank}の代わりに使った`);
+    }
+
+    // 革命(4枚出し)
+    if(combo.kind==="quad"){
       data.revolution = !data.revolution;
       events.push(data.revolution
         ? `${pname}さんが4枚出しで革命を起こした!(強さが逆転)`
         : `${pname}さんが4枚出しで革命を打ち消した!(強さが元に戻った)`);
     }
     // スペ3返し(革命中にスペードの3を単騎で出すと革命解除)
-    if(check.combo.kind==="single" && !check.combo.isJoker && cards[0]==="3S" && data.revolution){
+    if(combo.kind==="single" && !combo.isJoker && cards[0]==="3S" && data.revolution){
       data.revolution = false;
       events.push(`${pname}さんのスペード3返し!革命が終わった`);
     }
+    // 11バック(Jを出すと、そのトリックの間だけ強さが逆転。もう一度Jで元に戻る)
+    if(isSet && combo.rank==="J"){
+      data.jBack = !data.jBack;
+      events.push(data.jBack
+        ? `${pname}さんの11バック!このトリックの間は強さが逆転`
+        : `${pname}さんの11バックで強さが元に戻った`);
+    }
 
     // 縛り(1枚出しでの簡易実装。2連続で同じマークが出ると、そのマーク以外は出せなくなる)
-    if(check.combo.kind==="single" && !check.combo.isJoker){
+    if(combo.kind==="single" && !combo.isJoker){
       const suit = dfCardSuit(cards[0]);
       if(data.lastSingleSuit === suit){
         data.suitMatchStreak = (data.suitMatchStreak||0) + 1;
@@ -2934,69 +3054,51 @@ async function dfPlayCards(indices){
       data.lastSingleSuit = null;
     }
 
-    let finished = false;
-    if(hand.length===0){
-      data.finishOrder = data.finishOrder || [];
-      data.finishOrder.push(pid);
-      finished = true;
-      events.push(`${pname}さんが上がりました!(${data.finishOrder.length}番目)`);
-    }
-
-    const is8Giri = !check.combo.isJoker && check.combo.kind!=="kaidan" && check.combo.rank==="8";
+    const is8Giri = isSet && combo.rank==="8";
     if(is8Giri) events.push(`${pname}さんの8切り!場が流れました`);
+    const isSeven = isSet && combo.rank==="7";
+    const wentOut = hand.length===0;
 
+    // 7渡し: 出した枚数だけ、好きなカードを次の人に渡す(選び終わるまで手番はそのまま)
+    if(isSeven && !wentOut){
+      const toPid = dfFindNextActive(data.turnOrder, activeOrder, pid, []);
+      if(toPid && toPid!==pid){
+        const count = Math.min(cards.length, hand.length);
+        data.pendingSevenPass = { pid, toPid, count };
+        events.push(`${pname}さんの7渡し!${(data.players[toPid]||{}).name||"?"}さんに${count}枚渡します`);
+        data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+        return data;
+      }
+    }
+
+    dfAfterPlay(data, pid, is8Giri, wentOut, events);
     if(events.length) data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+    return data;
+  });
+}
 
-    let newActiveOrder = (data.activePlayOrder || data.turnOrder).slice();
-    if(finished) newActiveOrder = newActiveOrder.filter(p=>p!==pid);
-    data.activePlayOrder = newActiveOrder;
+// 7渡しで渡すカードを確定する
+async function dfSevenPass(indices){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing" || !data.pendingSevenPass) return data;
+    const pend = data.pendingSevenPass;
+    if(pend.pid!==myId) return data;
+    const me = data.players[myId];
+    const hand = (me.hand||[]).slice();
+    const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
+    if(idxs.length!==pend.count) return data;
 
-    if(newActiveOrder.length<=1){
-      if(newActiveOrder.length===1) data.finishOrder.push(newActiveOrder[0]);
-      data.prevFinishOrder = data.finishOrder.slice();
+    const given = idxs.map(i=>hand[i]);
+    idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
+    me.hand = dfSortHand(hand);
+    const to = data.players[pend.toPid];
+    to.hand = dfSortHand([...(to.hand||[]), ...given]);
+    data.pendingSevenPass = null;
 
-      // ポイント加算: 大富豪+2, 富豪+1, 貧民0, 大貧民-1
-      const pointsByPlace = [2,1,0,-1];
-      data.finishOrder.forEach((fpid, i)=>{
-        data.players[fpid].score = (data.players[fpid].score||0) + (pointsByPlace[i]||0);
-      });
-
-      const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
-      if((data.round||0) >= maxRounds){
-        let maxScore = -Infinity;
-        (data.turnOrder||[]).forEach(p=>{ const s=data.players[p].score||0; if(s>maxScore) maxScore=s; });
-        data.gameWinners = (data.turnOrder||[]).filter(p=> (data.players[p].score||0)===maxScore);
-        data.phase = "gameover";
-      } else {
-        data.phase = "roundover";
-      }
-
-      data.field = []; data.fieldMeta = null;
-      data.passedThisTrick = [];
-      return data;
-    }
-
-    const fullOrder = data.turnOrder;
-
-    if(is8Giri || finished){
-      data.field = [];
-      data.fieldMeta = null;
-      data.lockedSuit = null;
-      data.suitMatchStreak = 0;
-      data.lastSingleSuit = null;
-      data.passedThisTrick = [];
-      if(!finished){
-        data.currentIdx = newActiveOrder.indexOf(pid); // 8切りは出した本人がそのままリード
-      } else {
-        const nextPid = dfFindNextActive(fullOrder, newActiveOrder, pid, []);
-        data.currentIdx = newActiveOrder.indexOf(nextPid !== null ? nextPid : newActiveOrder[0]);
-      }
-    } else {
-      const passed = data.passedThisTrick || [];
-      const nextPid = dfFindNextActive(fullOrder, newActiveOrder, pid, passed);
-      data.currentIdx = newActiveOrder.indexOf(nextPid !== null ? nextPid : pid);
-    }
-
+    const events = [`${me.name||"?"}さんが${to.name||"?"}さんに${given.length}枚渡しました`];
+    // 渡して手札が空になったら、そのまま上がり
+    dfAfterPlay(data, myId, false, me.hand.length===0, events);
+    data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
     return data;
   });
 }
@@ -3004,6 +3106,7 @@ async function dfPlayCards(indices){
 async function dfPassTurn(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing" || !data.fieldMeta) return data; // 場が空の時はパス不可
+    if(data.pendingSevenPass) return data;
     const activeOrder = data.activePlayOrder || data.turnOrder;
     const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
@@ -3018,13 +3121,11 @@ async function dfPassTurn(){
 
     if(!nextPid || nextPid === data.lastPlayerPid){
       // 全員パス → 場が流れて最後に出した人のリードに戻る
-      data.field = [];
-      data.fieldMeta = null;
-      data.lockedSuit = null;
-      data.suitMatchStreak = 0;
-      data.lastSingleSuit = null;
-      data.passedThisTrick = [];
-      const leaderPid = data.lastPlayerPid;
+      dfClearTrick(data);
+      let leaderPid = data.lastPlayerPid;
+      if(!leaderPid || !activeOrder.includes(leaderPid)){
+        leaderPid = dfFindNextActive(fullOrder, activeOrder, pid, []) || pid;
+      }
       data.currentIdx = activeOrder.indexOf(leaderPid);
       const leaderName = (data.players[leaderPid]||{}).name || "?";
       data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス / 全員パスで場が流れました。${leaderName}さんの番です` };
@@ -3045,8 +3146,9 @@ function dfComboDescription(fieldMeta){
   if(!fieldMeta) return "";
   if(fieldMeta.isJoker) return "ジョーカー単騎";
   if(fieldMeta.kind==="kaidan") return `階段(${fieldMeta.length}枚)`;
+  if(fieldMeta.rank==="JOKER") return "ジョーカーペア";
   const kindLabel = { single:"単騎", pair:"ペア", triple:"3枚出し", quad:"4枚出し" }[fieldMeta.kind] || fieldMeta.kind;
-  return kindLabel;
+  return `${kindLabel}(${fieldMeta.rank})`;
 }
 
 function dfRender(data){
@@ -3065,7 +3167,7 @@ function dfRender(data){
   document.getElementById("df-round-label").textContent =
     (data.round||0) > 0 ? `ラウンド ${Math.min(data.round, maxRounds)}/${maxRounds}` : "";
 
-  const phaseNames = { waiting:"待機中", exchange:"カード交換中", playing:"プレイ中", roundover:"ラウンド終了" };
+  const phaseNames = { waiting:"待機中", exchange:"カード交換中", playing:"プレイ中", roundover:"ラウンド終了", gameover:"ゲーム終了" };
   document.getElementById("df-phase-label").textContent = phaseNames[data.phase] || data.phase || "";
 
   if(data.phase!=="exchange") dfSelectedReturnIdx = -1;
@@ -3080,11 +3182,10 @@ function dfRender(data){
   } else if(data.phase==="playing"){
     const parts = [];
     if(data.revolution) parts.push("革命中!");
+    if(data.jBack) parts.push("11バック中!");
     if(data.lockedSuit) parts.push(`縛り: ${SUIT_SYMBOL[data.lockedSuit]||data.lockedSuit}`);
     if(data.fieldMeta) parts.push(dfComboDescription(data.fieldMeta));
     infoEl.textContent = parts.join(" ・ ");
-  } else if(data.phase==="roundover"){
-    infoEl.textContent = "";
   } else {
     infoEl.textContent = "";
   }
@@ -3107,13 +3208,17 @@ function dfRender(data){
       else if(pid===ex.fugouPid) rankTag = " (富豪)";
       else if(pid===ex.hinminPid) rankTag = " (貧民)";
       else if(pid===ex.daihinminPid) rankTag = " (大貧民)";
-    } else if(data.phase==="roundover"){
+    } else if(data.phase==="roundover" || data.phase==="gameover"){
       const fIdx = finishOrder.indexOf(pid);
       if(fIdx>=0) rankTag = ` (${rankNames[fIdx]||(fIdx+1)+"位"})`;
     }
     const seat = document.createElement("div");
     seat.className = "seat" + (isMe ? " me":"") + (currentPid===pid ? " turn":"");
-    const finishedTag = data.phase==="playing" && hand.length===0 ? " 🎉上がり" : "";
+    let finishedTag = "";
+    if(data.phase==="playing"){
+      if(data.fallenPid===pid) finishedTag = " 💥都落ち";
+      else if(hand.length===0) finishedTag = " 🎉上がり";
+    }
     seat.innerHTML = `
       <div class="pname">${idx+1}番手 ${p.name}${isMe?" (自分)":""}${data.hostId===pid?" 👑":""}${rankTag}</div>
       <div class="status">累計 ${p.score||0} pt${finishedTag}</div>
@@ -3124,6 +3229,16 @@ function dfRender(data){
 
   dfRenderActions(data);
   dfRenderStartButton(data);
+}
+
+// 自分の手札を操作なし(薄く)で並べる
+function dfShowHandDimmed(actionsEl, hand){
+  hand.forEach(card=>{
+    const el = document.createElement("div");
+    el.innerHTML = dfCardHtml(card);
+    el.firstChild.style.opacity = ".55";
+    actionsEl.appendChild(el.firstChild);
+  });
 }
 
 function dfRenderActions(data){
@@ -3171,12 +3286,12 @@ function dfRenderActions(data){
     }
     if(role==="daifugo-done" || role==="fugou-done"){
       msgEl.textContent = "お返しを渡しました。相手の操作を待っています…";
-      (me.hand||[]).forEach(card=>{ const el=document.createElement("div"); el.innerHTML=dfCardHtml(card); actionsEl.appendChild(el.firstChild); });
+      dfShowHandDimmed(actionsEl, me.hand||[]);
       return;
     }
     if(role==="daihinmin-wait" || role==="hinmin-wait"){
       msgEl.textContent = "カードを1枚献上しました。相手からのお返しを待っています…";
-      (me.hand||[]).forEach(card=>{ const el=document.createElement("div"); el.innerHTML=dfCardHtml(card); actionsEl.appendChild(el.firstChild); });
+      dfShowHandDimmed(actionsEl, me.hand||[]);
       return;
     }
     msgEl.textContent = "カード交換中です…";
@@ -3186,9 +3301,53 @@ function dfRenderActions(data){
   if(data.phase==="playing"){
     const activeOrder = data.activePlayOrder || order;
     const hand = me.hand || [];
+    const pend = data.pendingSevenPass;
 
+    if(data.fallenPid===myId){
+      msgEl.textContent = "都落ち…大貧民になりました。残りのプレイヤーの決着を見守っていてね。";
+      dfShowHandDimmed(actionsEl, hand);
+      return;
+    }
     if(hand.length===0){
       msgEl.textContent = "あなたは上がりました!他のプレイヤーの決着を見守っていてね。";
+      return;
+    }
+
+    // 7渡し: 出した人が渡すカードを選んでいる間
+    if(pend){
+      const toName = (data.players[pend.toPid]||{}).name || "?";
+      if(pend.pid===myId){
+        dfSelectedPlayIdxs = dfSelectedPlayIdxs.filter(i=>i>=0 && i<hand.length).slice(0, pend.count);
+        msgEl.textContent = `7渡し!${toName}さんに渡すカードを${pend.count}枚選んでね(${dfSelectedPlayIdxs.length}/${pend.count})`;
+        hand.forEach((card,idx)=>{
+          const selected = dfSelectedPlayIdxs.includes(idx);
+          const el = document.createElement("div");
+          el.innerHTML = dfCardHtml(card);
+          const cardDiv = el.firstChild;
+          cardDiv.style.cursor = "pointer";
+          cardDiv.style.margin = "3px";
+          if(selected){ cardDiv.style.boxShadow = "0 0 0 3px var(--gold-bright)"; cardDiv.style.transform = "translateY(-8px)"; }
+          cardDiv.onclick = ()=>{
+            if(selected) dfSelectedPlayIdxs = dfSelectedPlayIdxs.filter(i=>i!==idx);
+            else if(dfSelectedPlayIdxs.length < pend.count) dfSelectedPlayIdxs = [...dfSelectedPlayIdxs, idx];
+            dfRenderActions(data);
+          };
+          actionsEl.appendChild(cardDiv);
+        });
+        const row = document.createElement("div");
+        row.style.width="100%"; row.style.textAlign="center"; row.style.marginTop="10px";
+        const okBtn = document.createElement("button");
+        okBtn.className = "btn small";
+        okBtn.textContent = `この${pend.count}枚を渡す`;
+        okBtn.disabled = dfSelectedPlayIdxs.length !== pend.count;
+        okBtn.onclick = ()=>{ const idxs = dfSelectedPlayIdxs.slice(); dfSelectedPlayIdxs = []; dfSevenPass(idxs); };
+        row.appendChild(okBtn);
+        actionsEl.appendChild(row);
+      } else {
+        const passerName = (data.players[pend.pid]||{}).name || "?";
+        msgEl.textContent = `${passerName}さんが7渡しで${toName}さんに渡すカードを選んでいます…`;
+        dfShowHandDimmed(actionsEl, hand);
+      }
       return;
     }
 
@@ -3197,12 +3356,7 @@ function dfRenderActions(data){
       const curPid = activeOrder[data.currentIdx];
       const cur = data.players[curPid];
       msgEl.textContent = `${cur ? cur.name : "相手"} の番です…`;
-      hand.forEach(card=>{
-        const el = document.createElement("div");
-        el.innerHTML = dfCardHtml(card);
-        el.firstChild.style.opacity = ".55";
-        actionsEl.appendChild(el.firstChild);
-      });
+      dfShowHandDimmed(actionsEl, hand);
       return;
     }
 
@@ -3259,28 +3413,25 @@ function dfRenderActions(data){
     return;
   }
 
+  const rankNames = ["大富豪","富豪","貧民","大貧民"];
+  const finishOrder = data.finishOrder || [];
+  const rankLines = finishOrder.map((pid,i)=> `${rankNames[i]||(i+1)+"位"}: ${(data.players[pid]||{}).name || "?"}`).join(" / ");
+
   if(data.phase==="roundover"){
-    const rankNames = ["大富豪","富豪","貧民","大貧民"];
-    const finishOrder = data.finishOrder || [];
-    const lines = finishOrder.map((pid,i)=> `${rankNames[i]||(i+1)+"位"}: ${(data.players[pid]||{}).name || "?"}`);
-    msgEl.textContent = `ラウンド${data.round}終了! ${lines.join(" / ")}`;
+    msgEl.textContent = `ラウンド${data.round}終了! ${rankLines}`;
     return;
   }
 
-  if((data.round||0)>0 && me.hand && me.hand.length){
-    me.hand.forEach(card=>{
-      const el = document.createElement("div");
-      el.innerHTML = dfCardHtml(card);
-      actionsEl.appendChild(el.firstChild);
-    });
-    msgEl.textContent = "これがあなたの手札です";
-  } else if(order.length !== DF_PLAYER_COUNT){
+  if(data.phase==="gameover"){
+    const winners=(data.gameWinners||[]).map(pid=>(data.players[pid]||{}).name||"?").join("・");
+    msgEl.textContent = `🏆 全${maxRounds}ラウンド終了! 優勝: ${winners}(最終ラウンド ${rankLines})`;
+    return;
+  }
+
+  if(order.length !== DF_PLAYER_COUNT){
     msgEl.textContent = isHost
       ? `4人ちょうど集まったら配札できます(現在${order.length}/4人)`
       : `4人集まるのを待っています…(現在${order.length}/4人)`;
-  } else if((data.round||0) >= maxRounds){
-    const winners=(data.gameWinners||[]).map(pid=>(data.players[pid]||{}).name||"?").join("・");
-    msgEl.textContent = `🏆 全${maxRounds}ラウンド終了! 優勝: ${winners}`;
   } else {
     msgEl.textContent = isHost ? "準備ができたら配札してラウンドを開始できます。" : "ホストが配札するのを待っています…";
   }
@@ -3289,19 +3440,22 @@ function dfRenderActions(data){
 function dfRenderStartButton(data){
   const startBtn = document.getElementById("df-start-btn");
   const order = data.turnOrder || [];
-  const maxRounds = data.maxRounds || DF_MAX_ROUNDS;
-  const okPhase = !data.phase || data.phase==="waiting" || data.phase==="roundover";
-  if(!isHost || order.length !== DF_PLAYER_COUNT || !okPhase){
+  if(!isHost || order.length !== DF_PLAYER_COUNT){
     startBtn.style.display = "none";
     return;
   }
-  if((data.round||0) >= maxRounds){
+  if(data.phase==="gameover"){
     startBtn.style.display = "inline-block";
     startBtn.textContent = "新しいゲームを始める(ホスト)";
-    return;
+  } else if(data.phase==="roundover"){
+    startBtn.style.display = "inline-block";
+    startBtn.textContent = "次のラウンドを配札(ホスト)";
+  } else if(!data.phase || data.phase==="waiting"){
+    startBtn.style.display = "inline-block";
+    startBtn.textContent = "配札してラウンド開始(ホスト)";
+  } else {
+    startBtn.style.display = "none";
   }
-  startBtn.style.display = "inline-block";
-  startBtn.textContent = (data.round||0) === 0 ? "配札してラウンド開始(ホスト)" : "次のラウンドを配札(ホスト)";
 }
 
 </script>
