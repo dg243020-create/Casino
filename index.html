@@ -2773,36 +2773,41 @@ async function dfStartGame(){
 document.getElementById("df-start-btn").addEventListener("click", ()=>{ dfStartGame(); });
 
 // 大富豪/富豪が、献上返礼として渡すカードを1枚選んで確定する
+function dfSubmitReturnCardCore(data, actorPid, cardIndex){
+  const ex = data.exchangeInfo;
+  if(!ex) return null;
+  let role = null;
+  if(actorPid===ex.daifugoPid && !ex.daifugoDone) role = "daifugo";
+  else if(actorPid===ex.fugouPid && !ex.fugouDone) role = "fugou";
+  if(!role) return null;
+
+  const me = data.players[actorPid];
+  const hand = (me.hand||[]).slice();
+  if(cardIndex<0 || cardIndex>=hand.length) return null;
+  const card = hand.splice(cardIndex,1)[0];
+  me.hand = dfSortHand(hand);
+
+  const targetPid = role==="daifugo" ? ex.daihinminPid : ex.hinminPid;
+  const targetHand = (data.players[targetPid].hand||[]).slice();
+  targetHand.push(card);
+  data.players[targetPid].hand = dfSortHand(targetHand);
+
+  if(role==="daifugo") ex.daifugoDone = true;
+  else ex.fugouDone = true;
+
+  if(ex.daifugoDone && ex.fugouDone){
+    data.exchangeInfo = null;
+    dfSetupPlayOrder(data, data.turnOrder||[]);
+  } else {
+    data.exchangeInfo = ex;
+  }
+  return data;
+}
+
 async function dfSubmitReturnCard(cardIndex){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="exchange" || !data.exchangeInfo) return data;
-    const ex = data.exchangeInfo;
-    let role = null;
-    if(myId===ex.daifugoPid && !ex.daifugoDone) role = "daifugo";
-    else if(myId===ex.fugouPid && !ex.fugouDone) role = "fugou";
-    if(!role) return data;
-
-    const me = data.players[myId];
-    const hand = (me.hand||[]).slice();
-    if(cardIndex<0 || cardIndex>=hand.length) return data;
-    const card = hand.splice(cardIndex,1)[0];
-    me.hand = dfSortHand(hand);
-
-    const targetPid = role==="daifugo" ? ex.daihinminPid : ex.hinminPid;
-    const targetHand = (data.players[targetPid].hand||[]).slice();
-    targetHand.push(card);
-    data.players[targetPid].hand = dfSortHand(targetHand);
-
-    if(role==="daifugo") ex.daifugoDone = true;
-    else ex.fugouDone = true;
-
-    if(ex.daifugoDone && ex.fugouDone){
-      data.exchangeInfo = null;
-      dfSetupPlayOrder(data, data.turnOrder||[]);
-    } else {
-      data.exchangeInfo = ex;
-    }
-    return data;
+    return dfSubmitReturnCardCore(data, myId, cardIndex) || data;
   });
 }
 
@@ -2984,156 +2989,404 @@ function dfAfterPlay(data, pid, is8Giri, finished, events){
   }
 }
 
+function dfPlayCardsCore(data, actorPid, indices){
+  if(data.pendingSevenPass || data.pendingTenDiscard) return null; // 選択待ち中は出せない
+  const activeOrder = data.activePlayOrder || data.turnOrder;
+  if(activeOrder[data.currentIdx]!==actorPid) return null;
+  const me = data.players[actorPid];
+  if(!me) return null;
+  const pname = me.name || "?";
+  const hand = (me.hand||[]).slice();
+  const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
+  if(idxs.length===0) return null;
+  const cards = idxs.map(i=>hand[i]);
+
+  const check = dfValidatePlay(data, cards);
+  if(!check.ok) return null; // 不正な出し方は無視
+  const combo = check.combo;
+
+  idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
+  me.hand = hand;
+
+  data.field = cards;
+  data.fieldMeta = dfBuildFieldMeta(combo);
+  data.lastPlayerPid = actorPid;
+
+  const events = [];
+  const isSet = !combo.isJoker && combo.kind!=="kaidan"; // 同じ数字の組(単騎・ペア・3枚・4枚)
+
+  if(combo.jokerCount && combo.rank!=="JOKER"){
+    events.push(`${pname}さんがジョーカーを${combo.rank}の代わりに使った`);
+  }
+
+  // 革命(4枚出し)
+  if(combo.kind==="quad"){
+    data.revolution = !data.revolution;
+    events.push(data.revolution
+      ? `${pname}さんが4枚出しで革命を起こした!(強さが逆転)`
+      : `${pname}さんが4枚出しで革命を打ち消した!(強さが元に戻った)`);
+  }
+  // スペ3返し(革命中にスペードの3を単騎で出すと革命解除)
+  if(combo.kind==="single" && !combo.isJoker && cards[0]==="3S" && data.revolution){
+    data.revolution = false;
+    events.push(`${pname}さんのスペード3返し!革命が終わった`);
+  }
+  // 11バック(Jを出すと、そのトリックの間だけ強さが逆転。もう一度Jで元に戻る)
+  if(isSet && combo.rank==="J"){
+    data.jBack = !data.jBack;
+    events.push(data.jBack
+      ? `${pname}さんの11バック!このトリックの間は強さが逆転`
+      : `${pname}さんの11バックで強さが元に戻った`);
+  }
+
+  // 縛り(1枚出しでの簡易実装。2連続で同じマークが出ると、そのマーク以外は出せなくなる)
+  if(combo.kind==="single" && !combo.isJoker){
+    const suit = dfCardSuit(cards[0]);
+    if(data.lastSingleSuit === suit){
+      data.suitMatchStreak = (data.suitMatchStreak||0) + 1;
+      if(data.suitMatchStreak>=2 && data.lockedSuit!==suit){
+        data.lockedSuit = suit;
+        events.push(`${pname}さんの${SUIT_SYMBOL[suit]||suit}が2連続!縛り発生(${SUIT_SYMBOL[suit]||suit}以外は出せません)`);
+      }
+    } else {
+      data.suitMatchStreak = 1;
+    }
+    data.lastSingleSuit = suit;
+  } else {
+    data.suitMatchStreak = 0;
+    data.lastSingleSuit = null;
+  }
+
+  const is8Giri = isSet && combo.rank==="8";
+  if(is8Giri) events.push(`${pname}さんの8切り!場が流れました`);
+  const isSeven = isSet && combo.rank==="7";
+  const isTen = isSet && combo.rank==="10";
+  const wentOut = hand.length===0;
+
+  // 7渡し: 出した枚数だけ、好きなカードを次の人に渡す(選び終わるまで手番はそのまま)
+  if(isSeven && !wentOut){
+    const toPid = dfFindNextActive(data.turnOrder, activeOrder, actorPid, []);
+    if(toPid && toPid!==actorPid){
+      const count = Math.min(cards.length, hand.length);
+      data.pendingSevenPass = { pid: actorPid, toPid, count };
+      events.push(`${pname}さんの7渡し!${(data.players[toPid]||{}).name||"?"}さんに${count}枚渡します`);
+      data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+      return data;
+    }
+  }
+
+  // 10捨て: 出した枚数だけ、手札から好きなカードを捨てられる(選び終わるまで手番はそのまま)
+  if(isTen && !wentOut){
+    const count = Math.min(cards.length, hand.length);
+    if(count>0){
+      data.pendingTenDiscard = { pid: actorPid, count };
+      events.push(`${pname}さんの10捨て!手札から${count}枚捨てます`);
+      data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+      return data;
+    }
+  }
+
+  dfAfterPlay(data, actorPid, is8Giri, wentOut, events);
+  if(events.length) data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+  return data;
+}
+
 async function dfPlayCards(indices){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing") return data;
-    if(data.pendingSevenPass) return data; // 7渡しのカード選択中は出せない
     const activeOrder = data.activePlayOrder || data.turnOrder;
     const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
-    const me = data.players[pid];
-    const pname = me.name || "?";
-    const hand = (me.hand||[]).slice();
-    const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
-    if(idxs.length===0) return data;
-    const cards = idxs.map(i=>hand[i]);
-
-    const check = dfValidatePlay(data, cards);
-    if(!check.ok) return data; // 不正な出し方は無視
-    const combo = check.combo;
-
-    idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
-    me.hand = hand;
-
-    data.field = cards;
-    data.fieldMeta = dfBuildFieldMeta(combo);
-    data.lastPlayerPid = pid;
-
-    const events = [];
-    const isSet = !combo.isJoker && combo.kind!=="kaidan"; // 同じ数字の組(単騎・ペア・3枚・4枚)
-
-    if(combo.jokerCount && combo.rank!=="JOKER"){
-      events.push(`${pname}さんがジョーカーを${combo.rank}の代わりに使った`);
-    }
-
-    // 革命(4枚出し)
-    if(combo.kind==="quad"){
-      data.revolution = !data.revolution;
-      events.push(data.revolution
-        ? `${pname}さんが4枚出しで革命を起こした!(強さが逆転)`
-        : `${pname}さんが4枚出しで革命を打ち消した!(強さが元に戻った)`);
-    }
-    // スペ3返し(革命中にスペードの3を単騎で出すと革命解除)
-    if(combo.kind==="single" && !combo.isJoker && cards[0]==="3S" && data.revolution){
-      data.revolution = false;
-      events.push(`${pname}さんのスペード3返し!革命が終わった`);
-    }
-    // 11バック(Jを出すと、そのトリックの間だけ強さが逆転。もう一度Jで元に戻る)
-    if(isSet && combo.rank==="J"){
-      data.jBack = !data.jBack;
-      events.push(data.jBack
-        ? `${pname}さんの11バック!このトリックの間は強さが逆転`
-        : `${pname}さんの11バックで強さが元に戻った`);
-    }
-
-    // 縛り(1枚出しでの簡易実装。2連続で同じマークが出ると、そのマーク以外は出せなくなる)
-    if(combo.kind==="single" && !combo.isJoker){
-      const suit = dfCardSuit(cards[0]);
-      if(data.lastSingleSuit === suit){
-        data.suitMatchStreak = (data.suitMatchStreak||0) + 1;
-        if(data.suitMatchStreak>=2 && data.lockedSuit!==suit){
-          data.lockedSuit = suit;
-          events.push(`${pname}さんの${SUIT_SYMBOL[suit]||suit}が2連続!縛り発生(${SUIT_SYMBOL[suit]||suit}以外は出せません)`);
-        }
-      } else {
-        data.suitMatchStreak = 1;
-      }
-      data.lastSingleSuit = suit;
-    } else {
-      data.suitMatchStreak = 0;
-      data.lastSingleSuit = null;
-    }
-
-    const is8Giri = isSet && combo.rank==="8";
-    if(is8Giri) events.push(`${pname}さんの8切り!場が流れました`);
-    const isSeven = isSet && combo.rank==="7";
-    const wentOut = hand.length===0;
-
-    // 7渡し: 出した枚数だけ、好きなカードを次の人に渡す(選び終わるまで手番はそのまま)
-    if(isSeven && !wentOut){
-      const toPid = dfFindNextActive(data.turnOrder, activeOrder, pid, []);
-      if(toPid && toPid!==pid){
-        const count = Math.min(cards.length, hand.length);
-        data.pendingSevenPass = { pid, toPid, count };
-        events.push(`${pname}さんの7渡し!${(data.players[toPid]||{}).name||"?"}さんに${count}枚渡します`);
-        data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
-        return data;
-      }
-    }
-
-    dfAfterPlay(data, pid, is8Giri, wentOut, events);
-    if(events.length) data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
-    return data;
+    return dfPlayCardsCore(data, pid, indices) || data;
   });
 }
 
 // 7渡しで渡すカードを確定する
+function dfSevenPassCore(data, actorPid, indices){
+  const pend = data.pendingSevenPass;
+  if(!pend || pend.pid!==actorPid) return null;
+  const me = data.players[actorPid];
+  const hand = (me.hand||[]).slice();
+  const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
+  if(idxs.length!==pend.count) return null;
+
+  const given = idxs.map(i=>hand[i]);
+  idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
+  me.hand = dfSortHand(hand);
+  const to = data.players[pend.toPid];
+  to.hand = dfSortHand([...(to.hand||[]), ...given]);
+  data.pendingSevenPass = null;
+
+  const events = [`${me.name||"?"}さんが${to.name||"?"}さんに${given.length}枚渡しました`];
+  // 渡して手札が空になったら、そのまま上がり
+  dfAfterPlay(data, actorPid, false, me.hand.length===0, events);
+  data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+  return data;
+}
+
 async function dfSevenPass(indices){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
     if(!data || data.phase!=="playing" || !data.pendingSevenPass) return data;
-    const pend = data.pendingSevenPass;
-    if(pend.pid!==myId) return data;
-    const me = data.players[myId];
-    const hand = (me.hand||[]).slice();
-    const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
-    if(idxs.length!==pend.count) return data;
-
-    const given = idxs.map(i=>hand[i]);
-    idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
-    me.hand = dfSortHand(hand);
-    const to = data.players[pend.toPid];
-    to.hand = dfSortHand([...(to.hand||[]), ...given]);
-    data.pendingSevenPass = null;
-
-    const events = [`${me.name||"?"}さんが${to.name||"?"}さんに${given.length}枚渡しました`];
-    // 渡して手札が空になったら、そのまま上がり
-    dfAfterPlay(data, myId, false, me.hand.length===0, events);
-    data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
-    return data;
+    if(data.pendingSevenPass.pid!==myId) return data;
+    return dfSevenPassCore(data, myId, indices) || data;
   });
+}
+
+// 10捨てで捨てるカードを確定する
+function dfTenDiscardCore(data, actorPid, indices){
+  const pend = data.pendingTenDiscard;
+  if(!pend || pend.pid!==actorPid) return null;
+  const me = data.players[actorPid];
+  const hand = (me.hand||[]).slice();
+  const idxs = [...new Set(indices)].filter(i=>Number.isInteger(i) && i>=0 && i<hand.length);
+  if(idxs.length!==pend.count) return null;
+
+  const discarded = idxs.map(i=>hand[i]);
+  idxs.slice().sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
+  me.hand = dfSortHand(hand);
+  data.pendingTenDiscard = null;
+
+  const events = [`${me.name||"?"}さんが${discarded.length}枚捨てました`];
+  dfAfterPlay(data, actorPid, false, me.hand.length===0, events);
+  data.lastEvent = { ts: Date.now(), text: events.join(" / ") };
+  return data;
+}
+
+async function dfTenDiscard(indices){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.phase!=="playing" || !data.pendingTenDiscard) return data;
+    if(data.pendingTenDiscard.pid!==myId) return data;
+    return dfTenDiscardCore(data, myId, indices) || data;
+  });
+}
+
+function dfPassTurnCore(data, actorPid){
+  if(!data.fieldMeta) return null; // 場が空の時はパス不可
+  if(data.pendingSevenPass || data.pendingTenDiscard) return null;
+  const activeOrder = data.activePlayOrder || data.turnOrder;
+  if(activeOrder[data.currentIdx]!==actorPid) return null;
+  const pname = (data.players[actorPid]||{}).name || "?";
+
+  const passed = (data.passedThisTrick || []).slice();
+  if(!passed.includes(actorPid)) passed.push(actorPid);
+  data.passedThisTrick = passed;
+
+  const fullOrder = data.turnOrder;
+  const nextPid = dfFindNextActive(fullOrder, activeOrder, actorPid, passed);
+
+  if(!nextPid || nextPid === data.lastPlayerPid){
+    // 全員パス → 場が流れて最後に出した人のリードに戻る
+    dfClearTrick(data);
+    let leaderPid = data.lastPlayerPid;
+    if(!leaderPid || !activeOrder.includes(leaderPid)){
+      leaderPid = dfFindNextActive(fullOrder, activeOrder, actorPid, []) || actorPid;
+    }
+    data.currentIdx = activeOrder.indexOf(leaderPid);
+    const leaderName = (data.players[leaderPid]||{}).name || "?";
+    data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス / 全員パスで場が流れました。${leaderName}さんの番です` };
+  } else {
+    data.currentIdx = activeOrder.indexOf(nextPid);
+    data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス` };
+  }
+  return data;
 }
 
 async function dfPassTurn(){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
-    if(!data || data.phase!=="playing" || !data.fieldMeta) return data; // 場が空の時はパス不可
-    if(data.pendingSevenPass) return data;
+    if(!data || data.phase!=="playing") return data;
     const activeOrder = data.activePlayOrder || data.turnOrder;
     const pid = activeOrder[data.currentIdx];
     if(pid!==myId) return data;
-    const pname = (data.players[pid]||{}).name || "?";
+    return dfPassTurnCore(data, pid) || data;
+  });
+}
 
-    const passed = (data.passedThisTrick || []).slice();
-    if(!passed.includes(pid)) passed.push(pid);
-    data.passedThisTrick = passed;
+/* ================================================================
+   大富豪 - NPC(CPU)
+   ================================================================ */
+let dfNpcTimer = null;
 
-    const fullOrder = data.turnOrder;
-    const nextPid = dfFindNextActive(fullOrder, activeOrder, pid, passed);
+// 手札から出せる組み合わせの候補を列挙する(同じ数字の組・ジョーカー代用・階段)
+function dfEnumerateHandCombos(hand){
+  const out = [];
+  const jokers = hand.filter(dfIsJoker);
+  const jCount = jokers.length;
+  const groups = {};
+  hand.forEach(c=>{ if(!dfIsJoker(c)){ const r=dfCardRank(c); (groups[r]=groups[r]||[]).push(c); } });
 
-    if(!nextPid || nextPid === data.lastPlayerPid){
-      // 全員パス → 場が流れて最後に出した人のリードに戻る
-      dfClearTrick(data);
-      let leaderPid = data.lastPlayerPid;
-      if(!leaderPid || !activeOrder.includes(leaderPid)){
-        leaderPid = dfFindNextActive(fullOrder, activeOrder, pid, []) || pid;
+  Object.values(groups).forEach(cards=>{
+    const c = cards.length;
+    for(let n=1;n<=4;n++){
+      if(n<=c) out.push(cards.slice(0,n));
+      else if(n<=c+jCount) out.push([...cards, ...jokers.slice(0, n-c)]);
+    }
+  });
+  if(jCount>=1) out.push([jokers[0]]);
+  if(jCount>=2) out.push([jokers[0], jokers[1]]);
+
+  const bySuit = {};
+  hand.forEach(c=>{ if(!dfIsJoker(c)){ const s=dfCardSuit(c); (bySuit[s]=bySuit[s]||[]).push(c); } });
+  Object.values(bySuit).forEach(cards=>{
+    const idxs = [...new Set(cards.map(c=>DF_RANK_ORDER.indexOf(dfCardRank(c))))].sort((a,b)=>a-b);
+    const cardByIdx = {};
+    cards.forEach(c=>{ cardByIdx[DF_RANK_ORDER.indexOf(dfCardRank(c))] = c; });
+    let runStart = 0;
+    for(let i=1;i<=idxs.length;i++){
+      if(i===idxs.length || idxs[i]!==idxs[i-1]+1){
+        const runLen = i - runStart;
+        if(runLen>=3){
+          for(let a=runStart;a<i;a++){
+            for(let b=a+2;b<i;b++){
+              const seq=[];
+              for(let k=a;k<=b;k++) seq.push(cardByIdx[idxs[k]]);
+              out.push(seq);
+            }
+          }
+        }
+        runStart = i;
       }
-      data.currentIdx = activeOrder.indexOf(leaderPid);
-      const leaderName = (data.players[leaderPid]||{}).name || "?";
-      data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス / 全員パスで場が流れました。${leaderName}さんの番です` };
-    } else {
-      data.currentIdx = activeOrder.indexOf(nextPid);
-      data.lastEvent = { ts: Date.now(), text: `${pname}さんがパス` };
+    }
+  });
+  return out;
+}
+
+// なるべく弱く、ジョーカーを使わない出し方を優先して選ぶ。出せなければnull(パス)。
+function dfNpcChoosePlay(data, pid){
+  const hand = data.players[pid].hand || [];
+  const combos = dfEnumerateHandCombos(hand);
+  const rev = dfEffRev(data);
+  let best = null, bestScore = Infinity;
+  combos.forEach(cards=>{
+    const check = dfValidatePlay(data, cards);
+    if(!check.ok) return;
+    const usesJoker = cards.some(dfIsJoker);
+    let strength = dfComboStrength(check.combo, rev);
+    if(strength===Infinity) strength = 999;
+    const score = strength + (usesJoker?200:0) + cards.length*0.01;
+    if(score < bestScore){ bestScore = score; best = cards; }
+  });
+  return best;
+}
+
+function dfNpcName(order, players){
+  let n = 1;
+  while(order.some(pid=> players[pid] && players[pid].isNPC && players[pid].name===("NPC"+n))) n++;
+  return "NPC"+n;
+}
+
+async function dfAddNpc(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="daifugo") return data;
+    if(data.hostId!==myId) return data;
+    if(data.phase && data.phase!=="waiting") return data;
+    const order = data.turnOrder || [];
+    if(order.length>=DF_PLAYER_COUNT) return data;
+    const seatNums = order.map(pid=> (data.players[pid]||{}).seat || 0);
+    let seat=0; while(seatNums.includes(seat)) seat++;
+    const npcId = "npc_"+Math.random().toString(36).slice(2,8);
+    data.players[npcId] = { name: dfNpcName(order, data.players), seat, hand:[], score:0, online:true, isNPC:true };
+    order.push(npcId);
+    data.turnOrder = order;
+    return data;
+  });
+}
+
+async function dfRemoveNpc(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="daifugo") return data;
+    if(data.hostId!==myId) return data;
+    if(data.phase && data.phase!=="waiting") return data;
+    const order = data.turnOrder || [];
+    for(let i=order.length-1;i>=0;i--){
+      const pid = order[i];
+      if(data.players[pid] && data.players[pid].isNPC){
+        order.splice(i,1);
+        delete data.players[pid];
+        data.turnOrder = order;
+        return data;
+      }
     }
     return data;
+  });
+}
+
+function dfIsNpcTurnPending(data){
+  if(!data || data.game!=="daifugo") return false;
+  if(data.phase==="exchange" && data.exchangeInfo){
+    const ex = data.exchangeInfo;
+    if(!ex.daifugoDone && data.players[ex.daifugoPid] && data.players[ex.daifugoPid].isNPC) return true;
+    if(!ex.fugouDone && data.players[ex.fugouPid] && data.players[ex.fugouPid].isNPC) return true;
+    return false;
+  }
+  if(data.phase==="playing"){
+    if(data.pendingSevenPass){
+      const p = data.players[data.pendingSevenPass.pid];
+      return !!(p && p.isNPC);
+    }
+    if(data.pendingTenDiscard){
+      const p = data.players[data.pendingTenDiscard.pid];
+      return !!(p && p.isNPC);
+    }
+    const activeOrder = data.activePlayOrder || data.turnOrder || [];
+    const p = data.players[activeOrder[data.currentIdx]];
+    return !!(p && p.isNPC);
+  }
+  return false;
+}
+
+function maybeDfNpcAct(data){
+  clearTimeout(dfNpcTimer);
+  if(!dfIsNpcTurnPending(data)) return;
+  dfNpcTimer = setTimeout(()=>{ dfNpcAct(); }, 650 + Math.random()*500);
+}
+
+async function dfNpcAct(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="daifugo") return data;
+
+    if(data.phase==="exchange" && data.exchangeInfo){
+      const ex = data.exchangeInfo;
+      let actorPid = null;
+      if(!ex.daifugoDone && data.players[ex.daifugoPid] && data.players[ex.daifugoPid].isNPC) actorPid = ex.daifugoPid;
+      else if(!ex.fugouDone && data.players[ex.fugouPid] && data.players[ex.fugouPid].isNPC) actorPid = ex.fugouPid;
+      if(!actorPid) return data;
+      const hand = data.players[actorPid].hand || [];
+      if(hand.length===0) return data;
+      const weakest = dfSortHand(hand)[0];
+      return dfSubmitReturnCardCore(data, actorPid, hand.indexOf(weakest)) || data;
+    }
+
+    if(data.phase!=="playing") return data;
+
+    if(data.pendingSevenPass){
+      const pend = data.pendingSevenPass;
+      const p = data.players[pend.pid];
+      if(!p || !p.isNPC) return data;
+      const hand = p.hand || [];
+      const weakSorted = dfSortHand(hand).slice(0, pend.count);
+      const idxs = weakSorted.map(c=> hand.indexOf(c));
+      return dfSevenPassCore(data, pend.pid, idxs) || data;
+    }
+
+    if(data.pendingTenDiscard){
+      const pend = data.pendingTenDiscard;
+      const p = data.players[pend.pid];
+      if(!p || !p.isNPC) return data;
+      const hand = p.hand || [];
+      const weakSorted = dfSortHand(hand).slice(0, pend.count);
+      const idxs = weakSorted.map(c=> hand.indexOf(c));
+      return dfTenDiscardCore(data, pend.pid, idxs) || data;
+    }
+
+    const activeOrder = data.activePlayOrder || data.turnOrder;
+    const pid = activeOrder[data.currentIdx];
+    const p = data.players[pid];
+    if(!p || !p.isNPC) return data;
+    const play = dfNpcChoosePlay(data, pid);
+    if(!play) return dfPassTurnCore(data, pid) || data;
+    const hand = p.hand || [];
+    const idxs = play.map(c=> hand.indexOf(c));
+    return dfPlayCardsCore(data, pid, idxs) || data;
   });
 }
 
@@ -3351,6 +3604,44 @@ function dfRenderActions(data){
       return;
     }
 
+    // 10捨て: 出した人が捨てるカードを選んでいる間
+    const tenPend = data.pendingTenDiscard;
+    if(tenPend){
+      if(tenPend.pid===myId){
+        dfSelectedPlayIdxs = dfSelectedPlayIdxs.filter(i=>i>=0 && i<hand.length).slice(0, tenPend.count);
+        msgEl.textContent = `10捨て!手札から${tenPend.count}枚選んで捨ててね(${dfSelectedPlayIdxs.length}/${tenPend.count})`;
+        hand.forEach((card,idx)=>{
+          const selected = dfSelectedPlayIdxs.includes(idx);
+          const el = document.createElement("div");
+          el.innerHTML = dfCardHtml(card);
+          const cardDiv = el.firstChild;
+          cardDiv.style.cursor = "pointer";
+          cardDiv.style.margin = "3px";
+          if(selected){ cardDiv.style.boxShadow = "0 0 0 3px var(--gold-bright)"; cardDiv.style.transform = "translateY(-8px)"; }
+          cardDiv.onclick = ()=>{
+            if(selected) dfSelectedPlayIdxs = dfSelectedPlayIdxs.filter(i=>i!==idx);
+            else if(dfSelectedPlayIdxs.length < tenPend.count) dfSelectedPlayIdxs = [...dfSelectedPlayIdxs, idx];
+            dfRenderActions(data);
+          };
+          actionsEl.appendChild(cardDiv);
+        });
+        const row = document.createElement("div");
+        row.style.width="100%"; row.style.textAlign="center"; row.style.marginTop="10px";
+        const okBtn = document.createElement("button");
+        okBtn.className = "btn small";
+        okBtn.textContent = `この${tenPend.count}枚を捨てる`;
+        okBtn.disabled = dfSelectedPlayIdxs.length !== tenPend.count;
+        okBtn.onclick = ()=>{ const idxs = dfSelectedPlayIdxs.slice(); dfSelectedPlayIdxs = []; dfTenDiscard(idxs); };
+        row.appendChild(okBtn);
+        actionsEl.appendChild(row);
+      } else {
+        const discarderName = (data.players[tenPend.pid]||{}).name || "?";
+        msgEl.textContent = `${discarderName}さんが10捨てで捨てるカードを選んでいます…`;
+        dfShowHandDimmed(actionsEl, hand);
+      }
+      return;
+    }
+
     const myTurn = activeOrder[data.currentIdx] === myId;
     if(!myTurn){
       const curPid = activeOrder[data.currentIdx];
@@ -3430,10 +3721,32 @@ function dfRenderActions(data){
 
   if(order.length !== DF_PLAYER_COUNT){
     msgEl.textContent = isHost
-      ? `4人ちょうど集まったら配札できます(現在${order.length}/4人)`
+      ? `4人ちょうど集まったら配札できます(現在${order.length}/4人)。人が足りなければNPCで埋められます`
       : `4人集まるのを待っています…(現在${order.length}/4人)`;
   } else {
     msgEl.textContent = isHost ? "準備ができたら配札してラウンドを開始できます。" : "ホストが配札するのを待っています…";
+  }
+
+  if(isHost){
+    const npcRow = document.createElement("div");
+    npcRow.style.width="100%"; npcRow.style.textAlign="center"; npcRow.style.marginTop="8px";
+    if(order.length < DF_PLAYER_COUNT){
+      const addBtn = document.createElement("button");
+      addBtn.className = "btn small ghost";
+      addBtn.textContent = "🤖 NPCを追加";
+      addBtn.onclick = ()=> dfAddNpc();
+      npcRow.appendChild(addBtn);
+    }
+    const npcCount = order.filter(pid=> data.players[pid] && data.players[pid].isNPC).length;
+    if(npcCount>0){
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn small ghost";
+      delBtn.style.marginLeft = "8px";
+      delBtn.textContent = "NPCを1人削除";
+      delBtn.onclick = ()=> dfRemoveNpc();
+      npcRow.appendChild(delBtn);
+    }
+    if(npcRow.children.length>0) actionsEl.appendChild(npcRow);
   }
 }
 
