@@ -1029,6 +1029,7 @@ function enterRoom(roomId){
       document.getElementById("df-room-name-label").textContent = data.roomName || "";
       showScreen("daifugo-table");
       dfRender(data);
+      maybeDfNpcAct(data);
     } else {
       document.getElementById("room-code-label").textContent = roomId;
       document.getElementById("room-name-label").textContent = data.roomName || "";
