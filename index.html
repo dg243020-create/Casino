@@ -3907,33 +3907,6 @@ function dfRenderStartButton(data){
   }
 }
 
-<!-- ==== 将棋・テーブル画面 ==== -->
-<div class="screen table-screen" id="shogi-table">
-  <div class="topbar">
-    <div id="sg-room-name-label" style="color:var(--cream);font-weight:700;"></div>
-    <div>部屋コード: <span class="room-code" id="sg-room-code-label">------</span></div>
-    <div>プレイヤー <span id="sg-player-count">0</span>/2</div>
-    <div id="sg-turn-label" style="color:var(--gold-bright);font-weight:700;"></div>
-    <button class="btn small ghost" id="sg-leave-btn">退室</button>
-  </div>
-
-  <div class="table-wrap" style="overflow-y:auto;">
-    <div class="sg-wrap">
-      <div class="sg-info" id="sg-top-info"></div>
-      <div class="sg-hand" id="sg-top-hand"></div>
-      <div class="sg-board" id="sg-board"></div>
-      <div class="sg-hand" id="sg-bottom-hand"></div>
-      <div class="sg-info" id="sg-bottom-info"></div>
-    </div>
-  </div>
-
-  <div class="actionbar">
-    <div class="msg" id="sg-action-msg"></div>
-    <div class="actions" id="sg-actions"></div>
-    <button class="btn small host-only" id="sg-start-btn">対局開始(ホスト)</button>
-  </div>
-</div>
-
 /* ================================================================
    将棋
    盤面: board[81] (index = 段*9 + 筋の列, 0が左上)。先手(▲)は下側、後手(△)は上側。
