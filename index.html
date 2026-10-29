@@ -470,6 +470,10 @@
       <div class="gtitle">大富豪</div>
       <div class="gdesc">4人固定・全3ラウンド制。8切り・11バック・7渡し・縛り・階段・革命(スペ3返しあり)・都落ち・ジョーカー代用に対応。合計ポイント最高の人が優勝。</div>
     </div>
+    <div class="game-card" id="pick-shogi">
+      <div class="gtitle">将棋</div>
+      <div class="gdesc">2人対戦。成り・持ち駒・二歩・打ち歩詰め・王手/詰み判定・投了に対応。先手後手はランダム。</div>
+    </div>
     <button class="btn ghost" id="open-room-list-btn" style="margin-top:14px;">部屋を探す(今開いている部屋の一覧)→</button>
   </div>
 </div>
@@ -647,6 +651,33 @@
   </div>
 </div>
 
+<!-- ==== 将棋・テーブル画面 ==== -->
+<div class="screen table-screen" id="shogi-table">
+  <div class="topbar">
+    <div id="sg-room-name-label" style="color:var(--cream);font-weight:700;"></div>
+    <div>部屋コード: <span class="room-code" id="sg-room-code-label">------</span></div>
+    <div>プレイヤー <span id="sg-player-count">0</span>/2</div>
+    <div id="sg-turn-label" style="color:var(--gold-bright);font-weight:700;"></div>
+    <button class="btn small ghost" id="sg-leave-btn">退室</button>
+  </div>
+
+  <div class="table-wrap" style="overflow-y:auto;">
+    <div class="sg-wrap">
+      <div class="sg-info" id="sg-top-info"></div>
+      <div class="sg-hand" id="sg-top-hand"></div>
+      <div class="sg-board" id="sg-board"></div>
+      <div class="sg-hand" id="sg-bottom-hand"></div>
+      <div class="sg-info" id="sg-bottom-info"></div>
+    </div>
+  </div>
+
+  <div class="actionbar">
+    <div class="msg" id="sg-action-msg"></div>
+    <div class="actions" id="sg-actions"></div>
+    <button class="btn small host-only" id="sg-start-btn">対局開始(ホスト)</button>
+  </div>
+</div>
+    
 <!-- ==== 部屋内チャット(全ゲーム共通のフローティングウィジェット) ==== -->
 <div id="chat-widget" style="display:none;">
   <button id="chat-toggle-btn" aria-label="チャットを開く">
@@ -718,6 +749,7 @@ function maxSeatsFor(game){
   if(game==="uno") return 8;
   if(game==="shinkei") return 8;
   if(game==="daifugo") return 4;
+　if(game==="shogi") return 2;
   return 5;
 }
 
@@ -774,12 +806,18 @@ document.getElementById("pick-daifugo").addEventListener("click", ()=>{
   document.getElementById("lobby-sub").textContent = "友達とリアルタイムで大富豪(4人固定・全3ラウンド)。8切り・11バック・7渡し・都落ちなどのルール入りで盛り上がるよ。";
   showScreen("lobby");
 });
+document.getElementById("pick-shogi").addEventListener("click", ()=>{
+  selectedGame = "shogi";
+  document.getElementById("lobby-title").textContent = "Shogi Table";
+  document.getElementById("lobby-sub").textContent = "友達とリアルタイムで将棋(2人対戦)。先手後手はランダムで決まるよ。";
+  showScreen("lobby");
+});
 document.getElementById("lobby-back-btn").addEventListener("click", ()=>{
   showScreen("game-select");
 });
 
 /* ================= 部屋一覧 ================= */
-const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", uno: "UNO", shinkei: "神経衰弱", daifugo: "大富豪" };
+const GAME_LABELS = { blackjack: "ブラックジャック", babanuki: "ババ抜き", uno: "UNO", shinkei: "神経衰弱", daifugo: "大富豪", shogi: "将棋" };
 let unsubRoomList = null;
 const rlNameInput = document.getElementById("rl-name-input");
 
@@ -888,6 +926,8 @@ function buildNewPlayer(game){
     return { name: myName, seat: 0, score: 0, online: true };
   } else if(game === "daifugo"){
     return { name: myName, seat: 0, hand: [], score: 0, online: true };
+  } else if(game === "shogi"){
+    return { name: myName, seat: 0, online: true };
   }
   return { name: myName, chips: 1000, bet: 0, hand: [], status: "betting", seat: 0, debt: 0 };
 }
@@ -995,6 +1035,18 @@ document.getElementById("create-room-btn").addEventListener("click", async ()=>{
         [myId]: { name: myName, seat: 0, hand: [], score: 0, online: true }
       }
     };
+　 } else if(selectedGame === "shogi"){
+    initialState = {
+      game: "shogi",
+      roomName: roomName,
+      hostId: myId,
+      phase: "waiting",
+      createdAt: Date.now(),
+      turnOrder: [myId],
+      players: {
+        [myId]: { name: myName, seat: 0, online: true }
+      }
+    };
   } else {
     initialState = {
       game: "blackjack",
@@ -1066,6 +1118,7 @@ function enterRoom(roomId){
   unSelected = [];
   dfInitialized = false;
   dfShownEventTs = 0;
+　sgSelected = -1; sgDrop = ""; sgPromo = null; sgInitialized = false;
 
   subscribeChat(roomId);
   document.getElementById("chat-widget").style.display = "flex";
@@ -1105,6 +1158,11 @@ function enterRoom(roomId){
       showScreen("daifugo-table");
       dfRender(data);
       maybeDfNpcAct(data);
+    } else if(data.game === "shogi"){
+      document.getElementById("sg-room-code-label").textContent = roomId;
+      document.getElementById("sg-room-name-label").textContent = data.roomName || "";
+      showScreen("shogi-table");
+      sgRender(data);
     } else {
       document.getElementById("room-code-label").textContent = roomId;
       document.getElementById("room-name-label").textContent = data.roomName || "";
@@ -1143,6 +1201,7 @@ document.getElementById("bk-leave-btn").addEventListener("click", ()=>{ leaveCur
 document.getElementById("un-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("sk-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("df-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
+document.getElementById("sg-leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 document.getElementById("leave-btn").addEventListener("click", ()=>{ leaveCurrentRoom(); });
 
 /* ================= 自動復帰 ================= */
@@ -3848,6 +3907,502 @@ function dfRenderStartButton(data){
   }
 }
 
+<!-- ==== 将棋・テーブル画面 ==== -->
+<div class="screen table-screen" id="shogi-table">
+  <div class="topbar">
+    <div id="sg-room-name-label" style="color:var(--cream);font-weight:700;"></div>
+    <div>部屋コード: <span class="room-code" id="sg-room-code-label">------</span></div>
+    <div>プレイヤー <span id="sg-player-count">0</span>/2</div>
+    <div id="sg-turn-label" style="color:var(--gold-bright);font-weight:700;"></div>
+    <button class="btn small ghost" id="sg-leave-btn">退室</button>
+  </div>
+
+  <div class="table-wrap" style="overflow-y:auto;">
+    <div class="sg-wrap">
+      <div class="sg-info" id="sg-top-info"></div>
+      <div class="sg-hand" id="sg-top-hand"></div>
+      <div class="sg-board" id="sg-board"></div>
+      <div class="sg-hand" id="sg-bottom-hand"></div>
+      <div class="sg-info" id="sg-bottom-info"></div>
+    </div>
+  </div>
+
+  <div class="actionbar">
+    <div class="msg" id="sg-action-msg"></div>
+    <div class="actions" id="sg-actions"></div>
+    <button class="btn small host-only" id="sg-start-btn">対局開始(ホスト)</button>
+  </div>
+</div>
+
+/* ================================================================
+   将棋
+   盤面: board[81] (index = 段*9 + 筋の列, 0が左上)。先手(▲)は下側、後手(△)は上側。
+   駒: "b"/"w" + 種類。例 "bFU"。空きマスは "" (Firebaseで消えないように)
+   種類: FU歩 KY香 KE桂 GI銀 KI金 KA角 HI飛 OU玉 / 成: TO NY NK NG UM馬 RY龍
+   ================================================================ */
+const SG_PROMOTE = { FU:"TO", KY:"NY", KE:"NK", GI:"NG", KA:"UM", HI:"RY" };
+const SG_DEMOTE  = { TO:"FU", NY:"KY", NK:"KE", NG:"GI", UM:"KA", RY:"HI" };
+const SG_KANJI   = { FU:"歩", KY:"香", KE:"桂", GI:"銀", KI:"金", KA:"角", HI:"飛", OU:"玉",
+                     TO:"と", NY:"杏", NK:"圭", NG:"全", UM:"馬", RY:"龍" };
+const SG_HAND_ORDER = ["HI","KA","KI","GI","KE","KY","FU"];
+
+let sgSelected = -1;      // 選択中の盤上の駒
+let sgDrop = "";          // 選択中の持ち駒(打つ予定)
+let sgPromo = null;       // 成る/成らない選択待ち {from,to}
+let sgData = null;
+let sgInitialized = false;
+let sgShownMoveCount = 0;
+
+function sgType(p){ return p.slice(1); }
+function sgZeroHands(){ return { FU:0, KY:0, KE:0, GI:0, KI:0, KA:0, HI:0 }; }
+
+function sgInitialBoard(){
+  const b = new Array(81).fill("");
+  const back = ["KY","KE","GI","KI","OU","KI","GI","KE","KY"];
+  for(let c=0;c<9;c++){
+    b[c] = "w"+back[c];       b[72+c] = "b"+back[c];
+    b[18+c] = "wFU";          b[54+c] = "bFU";
+  }
+  b[9+1] = "wHI";  b[9+7] = "wKA";
+  b[63+1] = "bKA"; b[63+7] = "bHI";
+  return b;
+}
+
+function sgBoardOf(data){
+  if(!data.board || data.phase==="waiting") return sgInitialBoard();
+  return Array.from({length:81}, (_,i)=> data.board[i] || "");
+}
+function sgHandsOf(data){
+  const out = { b:sgZeroHands(), w:sgZeroHands() };
+  const h = data.hands || {};
+  ["b","w"].forEach(s=>{ SG_HAND_ORDER.forEach(t=>{ out[s][t] = (h[s] && h[s][t]) || 0; }); });
+  return out;
+}
+
+function sgMoveDefs(type, f){
+  const diag = [[1,1],[1,-1],[-1,1],[-1,-1]];
+  const orth = [[1,0],[-1,0],[0,1],[0,-1]];
+  const gold = [[f,-1],[f,0],[f,1],[0,-1],[0,1],[-f,0]];
+  switch(type){
+    case "FU": return { steps:[[f,0]], slides:[] };
+    case "KY": return { steps:[], slides:[[f,0]] };
+    case "KE": return { steps:[[2*f,-1],[2*f,1]], slides:[] };
+    case "GI": return { steps:[[f,-1],[f,0],[f,1],[-f,-1],[-f,1]], slides:[] };
+    case "KI": case "TO": case "NY": case "NK": case "NG": return { steps:gold, slides:[] };
+    case "OU": return { steps:[...diag,...orth], slides:[] };
+    case "KA": return { steps:[], slides:diag };
+    case "UM": return { steps:orth, slides:diag };
+    case "HI": return { steps:[], slides:orth };
+    case "RY": return { steps:diag, slides:orth };
+  }
+  return { steps:[], slides:[] };
+}
+
+// 駒の動き(王手放置などは考えない)で行ける升の一覧
+function sgPseudoTargets(board, idx){
+  const piece = board[idx];
+  const side = piece[0];
+  const f = side==="b" ? -1 : 1;
+  const r = Math.floor(idx/9), c = idx%9;
+  const defs = sgMoveDefs(sgType(piece), f);
+  const out = [];
+  const tryAdd = (nr,nc)=>{
+    if(nr<0||nr>8||nc<0||nc>8) return false;
+    const t = board[nr*9+nc];
+    if(t && t[0]===side) return false;
+    out.push(nr*9+nc);
+    return !t; // 空きマスなら先へ進める
+  };
+  defs.steps.forEach(([dr,dc])=>{ tryAdd(r+dr, c+dc); });
+  defs.slides.forEach(([dr,dc])=>{
+    let nr=r+dr, nc=c+dc;
+    while(tryAdd(nr,nc)){ nr+=dr; nc+=dc; }
+  });
+  return out;
+}
+
+function sgFindKing(board, side){ return board.indexOf(side+"OU"); }
+
+function sgInCheck(board, side){
+  const k = sgFindKing(board, side);
+  if(k<0) return false;
+  const opp = side==="b" ? "w" : "b";
+  for(let i=0;i<81;i++){
+    const p = board[i];
+    if(p && p[0]===opp && sgPseudoTargets(board,i).includes(k)) return true;
+  }
+  return false;
+}
+
+function sgInPromoZone(side,row){ return side==="b" ? row<=2 : row>=6; }
+// 行き場のない位置か(歩・香は最奥段、桂は奥2段)
+function sgMustPromote(type, side, row){
+  const far = side==="b" ? row : 8-row; // 敵陣側からの距離(0が最奥)
+  if(type==="FU"||type==="KY") return far===0;
+  if(type==="KE") return far<=1;
+  return false;
+}
+
+function sgApply(board, hands, side, m){
+  const nb = board.slice();
+  const nh = { b:{...hands.b}, w:{...hands.w} };
+  if(m.drop){
+    nb[m.to] = side + m.drop;
+    nh[side][m.drop]--;
+  } else {
+    let piece = nb[m.from];
+    const cap = nb[m.to];
+    if(cap){
+      const t = sgType(cap);
+      const base = SG_DEMOTE[t] || t;
+      nh[side][base] = (nh[side][base]||0) + 1;
+    }
+    nb[m.from] = "";
+    if(m.promote) piece = side + SG_PROMOTE[sgType(piece)];
+    nb[m.to] = piece;
+  }
+  return { board:nb, hands:nh };
+}
+
+// 合法手をすべて列挙(王手放置・二歩・行き場なし・打ち歩詰めを除く)
+function sgLegalMoves(board, hands, side, skipUchi){
+  const out = [];
+  const opp = side==="b" ? "w" : "b";
+
+  for(let i=0;i<81;i++){
+    const p = board[i];
+    if(!p || p[0]!==side) continue;
+    const type = sgType(p);
+    const fromRow = Math.floor(i/9);
+    for(const t of sgPseudoTargets(board,i)){
+      const row = Math.floor(t/9);
+      const canPromo = !!SG_PROMOTE[type] && (sgInPromoZone(side,row) || sgInPromoZone(side,fromRow));
+      const must = sgMustPromote(type, side, row);
+      const variants = [];
+      if(canPromo) variants.push(true);
+      if(!must) variants.push(false);
+      for(const v of variants){
+        const m = { from:i, to:t, promote:v };
+        const r = sgApply(board,hands,side,m);
+        if(!sgInCheck(r.board, side)) out.push(m);
+      }
+    }
+  }
+
+  for(const type of SG_HAND_ORDER){
+    if((hands[side][type]||0) <= 0) continue;
+    let pawnCols = null;
+    if(type==="FU"){
+      pawnCols = new Array(9).fill(false);
+      for(let i=0;i<81;i++){ if(board[i]===side+"FU") pawnCols[i%9] = true; }
+    }
+    for(let t=0;t<81;t++){
+      if(board[t]) continue;
+      const row = Math.floor(t/9);
+      if(sgMustPromote(type, side, row)) continue;      // 行き場のない所には打てない
+      if(type==="FU" && pawnCols[t%9]) continue;         // 二歩
+      const m = { from:-1, drop:type, to:t };
+      const r = sgApply(board,hands,side,m);
+      if(sgInCheck(r.board, side)) continue;
+      if(type==="FU" && !skipUchi && sgInCheck(r.board, opp)){
+        // 打ち歩詰め
+        if(sgLegalMoves(r.board, r.hands, opp, true).length===0) continue;
+      }
+      out.push(m);
+    }
+  }
+  return out;
+}
+
+async function sgStartGame(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shogi") return data;
+    if(data.phase==="playing") return data;
+    const order = data.turnOrder || [];
+    if(order.length!==2) return data;
+    const swap = Math.random()<0.5;
+    data.sente = swap ? order[1] : order[0];
+    data.gote  = swap ? order[0] : order[1];
+    data.board = sgInitialBoard();
+    data.hands = { b:sgZeroHands(), w:sgZeroHands() };
+    data.turn = "b";
+    data.lastMove = { from:-1, to:-1, ts:0 };
+    data.moveCount = 0;
+    data.winner = "";
+    data.reason = "";
+    data.phase = "playing";
+    return data;
+  });
+}
+
+async function sgSubmitMove(req){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shogi" || data.phase!=="playing") return data;
+    const side = data.turn;
+    const pid = side==="b" ? data.sente : data.gote;
+    if(pid!==myId) return data;
+
+    const board = sgBoardOf(data), hands = sgHandsOf(data);
+    const legal = sgLegalMoves(board, hands, side, false);
+    const m = legal.find(x=>
+      x.from===req.from && x.to===req.to &&
+      !!x.promote===!!req.promote && (x.drop||"")===(req.drop||""));
+    if(!m) return data;
+
+    const r = sgApply(board, hands, side, m);
+    const opp = side==="b" ? "w" : "b";
+    data.board = r.board;
+    data.hands = r.hands;
+    data.lastMove = { from:m.from, to:m.to, ts:Date.now() };
+    data.moveCount = (data.moveCount||0) + 1;
+    data.turn = opp;
+    if(sgLegalMoves(r.board, r.hands, opp, false).length===0){
+      data.phase = "gameover";
+      data.winner = side;
+      data.reason = "詰み";
+    }
+    return data;
+  });
+}
+
+async function sgResign(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shogi" || data.phase!=="playing") return data;
+    const side = data.sente===myId ? "b" : (data.gote===myId ? "w" : null);
+    if(!side) return data;
+    data.phase = "gameover";
+    data.winner = side==="b" ? "w" : "b";
+    data.reason = "投了";
+    return data;
+  });
+}
+
+// 対戦相手が退室して対局が続けられない時、ホストが待機状態に戻す
+async function sgBackToWaiting(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shogi" || data.hostId!==myId) return data;
+    data.phase = "waiting";
+    return data;
+  });
+}
+
+document.getElementById("sg-start-btn").addEventListener("click", ()=>{ sgSelected=-1; sgDrop=""; sgPromo=null; sgStartGame(); });
+
+document.getElementById("sg-board").addEventListener("click", (e)=>{
+  const cell = e.target.closest(".sg-cell");
+  if(!cell) return;
+  const idx = parseInt(cell.dataset.idx, 10);
+  if(!Number.isNaN(idx)) sgCellTap(idx);
+});
+document.getElementById("sg-bottom-hand").addEventListener("click", (e)=>{
+  const el = e.target.closest(".sg-hp");
+  if(el) sgHandTap(el.dataset.piece);
+});
+
+function sgMySide(data){
+  return data.sente===myId ? "b" : (data.gote===myId ? "w" : null);
+}
+
+function sgCellTap(idx){
+  const data = sgData;
+  if(!data || data.phase!=="playing") return;
+  const mySide = sgMySide(data);
+  if(!mySide || data.turn!==mySide || sgPromo) return;
+  const board = sgBoardOf(data), hands = sgHandsOf(data);
+  const legal = sgLegalMoves(board, hands, mySide, false);
+  const prev = sgSelected;
+
+  if(sgDrop){
+    if(legal.some(x=>x.drop===sgDrop && x.to===idx)){
+      const d = sgDrop; sgDrop = "";
+      sgSubmitMove({ from:-1, drop:d, to:idx, promote:false });
+      return;
+    }
+    sgDrop = "";
+  } else if(sgSelected>=0){
+    const ms = legal.filter(x=>x.from===sgSelected && x.to===idx);
+    if(ms.length){
+      if(ms.length>1){            // 成る/成らない両方可能 → 選んでもらう
+        sgPromo = { from:sgSelected, to:idx };
+        sgRender(data);
+        return;
+      }
+      const from = sgSelected; sgSelected = -1;
+      sgSubmitMove({ from, to:idx, promote:ms[0].promote });
+      return;
+    }
+    sgSelected = -1;
+  }
+
+  const p = board[idx];
+  if(p && p[0]===mySide && idx!==prev) sgSelected = idx;
+  sgRender(data);
+}
+
+function sgHandTap(piece){
+  const data = sgData;
+  if(!data || data.phase!=="playing" || sgPromo) return;
+  const mySide = sgMySide(data);
+  if(!mySide || data.turn!==mySide) return;
+  const hands = sgHandsOf(data);
+  if(!(hands[mySide][piece]>0)) return;
+  sgSelected = -1;
+  sgDrop = (sgDrop===piece) ? "" : piece;
+  sgRender(data);
+}
+
+function sgHandHtml(hands, side, selPiece){
+  const html = SG_HAND_ORDER.filter(t=>hands[side][t]>0).map(t=>
+    `<div class="sg-hp${selPiece===t?" sel":""}" data-piece="${t}">${SG_KANJI[t]}${hands[side][t]>1?`<small>${hands[side][t]}</small>`:""}</div>`
+  ).join("");
+  return html || `<span style="color:var(--cream-dim);font-family:sans-serif;font-size:.75rem;">持ち駒なし</span>`;
+}
+
+function sgRender(data){
+  sgData = data;
+  const order = data.turnOrder || [];
+  document.getElementById("sg-player-count").textContent = order.length;
+
+  const started = data.phase==="playing" || data.phase==="gameover";
+  const playing = data.phase==="playing";
+  const mySide = started ? sgMySide(data) : null;
+  const viewer = mySide || "b";
+  const oppView = viewer==="b" ? "w" : "b";
+  const board = sgBoardOf(data), hands = sgHandsOf(data);
+  const myTurn = playing && !!mySide && data.turn===mySide;
+  const legal = myTurn ? sgLegalMoves(board, hands, mySide, false) : [];
+  if(!myTurn){ sgSelected = -1; sgDrop = ""; sgPromo = null; }
+
+  const lm = data.lastMove || { from:-1, to:-1 };
+  const inCheck = playing ? sgInCheck(board, data.turn) : false;
+  const kingIdx = inCheck ? sgFindKing(board, data.turn) : -1;
+
+  const mc = data.moveCount || 0;
+  if(sgInitialized && mc>sgShownMoveCount && inCheck) toast("王手!");
+  sgShownMoveCount = mc; sgInitialized = true;
+
+  // 動かせる升の表示
+  const targets = new Set();
+  if(sgSelected>=0) legal.forEach(m=>{ if(m.from===sgSelected) targets.add(m.to); });
+  else if(sgDrop) legal.forEach(m=>{ if(m.drop===sgDrop) targets.add(m.to); });
+
+  // 盤面(後手視点の人は180度回して表示)
+  let html = "";
+  for(let d=0; d<81; d++){
+    const idx = viewer==="b" ? d : 80-d;
+    const p = board[idx];
+    let cls = "sg-cell";
+    if(started && (idx===lm.to || idx===lm.from)) cls += " last";
+    if(idx===sgSelected) cls += " sel";
+    if(idx===kingIdx) cls += " check";
+    if(targets.has(idx)) cls += " tgt" + (p ? " cap" : "");
+    let inner = "";
+    if(p){
+      const t = sgType(p), s = p[0];
+      const k = t==="OU" ? (s==="b" ? "玉" : "王") : SG_KANJI[t];
+      inner = `<span class="sg-p${s!==viewer?" rot":""}${SG_DEMOTE[t]?" pro":""}">${k}</span>`;
+    }
+    html += `<div class="${cls}" data-idx="${idx}">${inner}</div>`;
+  }
+  document.getElementById("sg-board").innerHTML = html;
+
+  // 持ち駒
+  document.getElementById("sg-top-hand").innerHTML = sgHandHtml(hands, oppView, "");
+  document.getElementById("sg-bottom-hand").innerHTML = sgHandHtml(hands, viewer, myTurn ? sgDrop : "");
+
+  // 名前表示(上=相手側、下=自分側)
+  const nameOf = pid => (data.players[pid] || {}).name || "(退室)";
+  const infoHtml = (side)=>{
+    const pid = side==="b" ? data.sente : data.gote;
+    const mark = side==="b" ? "▲先手" : "△後手";
+    return `${mark} ${nameOf(pid)}${pid===myId?" (自分)":""}`;
+  };
+  const topInfo = document.getElementById("sg-top-info");
+  const botInfo = document.getElementById("sg-bottom-info");
+  if(started){
+    topInfo.textContent = infoHtml(oppView);
+    botInfo.textContent = infoHtml(viewer);
+    topInfo.className = "sg-info" + (playing && data.turn===oppView ? " turn" : "");
+    botInfo.className = "sg-info" + (playing && data.turn===viewer ? " turn" : "");
+  } else {
+    const other = order.find(pid=>pid!==myId);
+    topInfo.textContent = other ? nameOf(other) : "対戦相手を待っています…";
+    botInfo.textContent = `${nameOf(myId)} (自分)`;
+    topInfo.className = "sg-info"; botInfo.className = "sg-info";
+  }
+
+  // 上のバーの手番表示
+  const turnLabel = document.getElementById("sg-turn-label");
+  if(playing) turnLabel.textContent = (data.turn==="b" ? "▲先手" : "△後手") + "の番";
+  else if(data.phase==="gameover") turnLabel.textContent = "対局終了";
+  else turnLabel.textContent = "待機中";
+
+  sgRenderActions(data, { started, playing, mySide, myTurn, inCheck });
+}
+
+function sgRenderActions(data, st){
+  const msgEl = document.getElementById("sg-action-msg");
+  const actionsEl = document.getElementById("sg-actions");
+  const startBtn = document.getElementById("sg-start-btn");
+  const order = data.turnOrder || [];
+  actionsEl.innerHTML = "";
+
+  const mkBtn = (label, fn, ghost)=>{
+    const b = document.createElement("button");
+    b.className = "btn small" + (ghost ? " ghost" : "");
+    b.textContent = label; b.onclick = fn;
+    actionsEl.appendChild(b);
+    return b;
+  };
+
+  // 開始/再戦ボタン
+  const canStart = isHost && ((data.phase==="waiting" && order.length===2) || data.phase==="gameover");
+  startBtn.style.display = canStart ? "inline-block" : "none";
+  startBtn.textContent = data.phase==="gameover" ? "もう一度あそぶ(ホスト)" : "対局開始(ホスト)";
+
+  if(data.phase==="waiting"){
+    msgEl.textContent = isHost
+      ? (order.length===2 ? "準備ができたら対局を開始できます。先手後手はランダムです。" : "もう1人集まったら開始できます。")
+      : "ホストが対局を開始するのを待っています…";
+    return;
+  }
+
+  const nameOf = pid => (data.players[pid] || {}).name || "?";
+  if(data.phase==="gameover"){
+    const wpid = data.winner==="b" ? data.sente : data.gote;
+    msgEl.textContent = `🏆 ${nameOf(wpid)} さんの勝ち!(${data.reason||""})` + (isHost ? "  もう一度あそべます。" : "");
+    return;
+  }
+
+  // 対局中: 相手が退室していないか
+  const absent = [data.sente, data.gote].some(pid=>!data.players[pid]);
+  if(absent){
+    msgEl.textContent = "対戦相手が退室しました。";
+    if(isHost) mkBtn("対局を終了して待機に戻す", ()=>sgBackToWaiting());
+    return;
+  }
+
+  const turnPid = data.turn==="b" ? data.sente : data.gote;
+  if(!st.mySide){
+    msgEl.textContent = `観戦中 ・ ${nameOf(turnPid)} さんの番です`;
+    return;
+  }
+
+  if(st.myTurn){
+    if(sgPromo){
+      msgEl.textContent = "成りますか?";
+      mkBtn("成る", ()=>{ const q=sgPromo; sgPromo=null; sgSelected=-1; sgSubmitMove({from:q.from,to:q.to,promote:true}); });
+      mkBtn("成らない", ()=>{ const q=sgPromo; sgPromo=null; sgSelected=-1; sgSubmitMove({from:q.from,to:q.to,promote:false}); }, true);
+      mkBtn("キャンセル", ()=>{ sgPromo=null; sgRender(sgData); }, true);
+      return;
+    }
+    msgEl.textContent = st.inCheck ? "⚠ 王手されています!あなたの番です" : "あなたの番です。動かす駒か持ち駒をタップしてね";
+  } else {
+    msgEl.textContent = `${nameOf(turnPid)} さんの番です…`;
+  }
+  mkBtn("投了", ()=>{ if(window.confirm("投了しますか?")) sgResign(); }, true);
+}
+    
 /* ================================================================
    部屋内チャット(その部屋にいる人だけに見える、全ゲーム共通の簡易チャット)
    ================================================================ */
