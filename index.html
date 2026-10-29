@@ -322,6 +322,112 @@
     vertical-align:middle;
   }
 
+/* ================= 将棋 ================= */
+#shogi-table .table-wrap::before{ display:none; } /* 「BLACKJACK PAYS…」の透かしを消す */
+
+.sg-wrap{
+  width:100%; display:flex; flex-direction:column; align-items:center;
+  gap:6px; padding:10px 8px;
+}
+.sg-info{
+  font-family:sans-serif; font-size:.95rem; color:var(--cream-dim);
+  padding:3px 12px; border-radius:12px;
+}
+.sg-info.turn{
+  color:var(--ink); background:var(--gold-bright); font-weight:800;
+}
+
+/* 盤 */
+.sg-board{
+  width:min(94%, 56vh, 480px);
+  aspect-ratio:1;
+  display:grid;
+  grid-template-columns:repeat(9,1fr);
+  grid-template-rows:repeat(9,1fr);
+  background:linear-gradient(135deg,#e6bf72,#d4a24f);
+  border:3px solid #5a3a1a;
+  box-shadow:0 8px 20px rgba(0,0,0,.55);
+  container-type:inline-size;
+  user-select:none; -webkit-user-select:none;
+}
+.sg-cell{
+  position:relative;
+  border:1px solid rgba(60,35,10,.65);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  touch-action:manipulation; -webkit-tap-highlight-color:rgba(232,199,102,.3);
+}
+
+/* 駒(五角形) */
+.sg-p{
+  position:relative; z-index:1; pointer-events:none;
+  width:84%; height:90%;
+  display:flex; align-items:center; justify-content:center;
+  clip-path:polygon(50% 0, 88% 14%, 96% 100%, 4% 100%, 12% 14%);
+  background:linear-gradient(180deg,#fbeccb,#ecd196);
+  color:#1b120a; font-family:"Hiragino Mincho ProN","Yu Mincho",serif; font-weight:800;
+  font-size:1.4rem; font-size:6.2cqw;
+  line-height:1; padding-top:6%;
+}
+.sg-p.pro{ color:#b3261e; }   /* 成り駒は赤字 */
+.sg-p.rot{ transform:rotate(180deg); }  /* 相手の駒は逆向き */
+
+/* 直前の手 */
+.sg-cell.last{ background:rgba(255,170,0,.35); }
+/* 選択中の駒 */
+.sg-cell.sel{
+  background:rgba(255,215,0,.65);
+  box-shadow:inset 0 0 0 3px #e8a800;
+}
+/* 王手されている玉 */
+.sg-cell.check{
+  background:radial-gradient(circle, rgba(220,40,40,.85) 0%, rgba(220,40,40,.35) 70%);
+}
+
+/* ★ 動ける範囲の強調表示 ★ */
+.sg-cell.tgt{
+  background:rgba(60,190,110,.42);
+  box-shadow:inset 0 0 0 2px rgba(20,140,70,.9);
+}
+.sg-cell.tgt::after{          /* 空きマス: 緑の点 */
+  content:""; position:absolute; z-index:2; pointer-events:none;
+  width:34%; height:34%; border-radius:50%;
+  background:rgba(15,130,65,.85);
+  animation:sgPulse 1.1s ease-in-out infinite;
+}
+.sg-cell.tgt.cap{             /* 相手の駒が取れるマス: 赤い枠 */
+  background:rgba(235,70,70,.40);
+  box-shadow:inset 0 0 0 3px #d02a2a;
+}
+.sg-cell.tgt.cap::after{
+  width:92%; height:92%; border-radius:8px; background:transparent;
+  border:3px solid #d02a2a; animation:none;
+}
+@keyframes sgPulse{
+  0%,100%{ transform:scale(.85); opacity:.75; }
+  50%{ transform:scale(1.1); opacity:1; }
+}
+
+/* 持ち駒 */
+.sg-hand{
+  width:min(94%, 480px); min-height:46px;
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px;
+}
+.sg-hp{
+  position:relative; width:36px; height:42px;
+  display:flex; align-items:center; justify-content:center;
+  clip-path:polygon(50% 0, 88% 14%, 96% 100%, 4% 100%, 12% 14%);
+  background:linear-gradient(180deg,#fbeccb,#ecd196);
+  color:#1b120a; font-family:"Hiragino Mincho ProN","Yu Mincho",serif; font-weight:800; font-size:1.2rem;
+  padding-top:5px; cursor:pointer; transition:transform .12s;
+}
+.sg-hp small{
+  position:absolute; right:3px; bottom:2px;
+  font-family:sans-serif; font-size:.7rem; font-weight:800; color:#b3261e;
+}
+.sg-hp.sel{ background:linear-gradient(180deg,#ffe27a,#ffc933); transform:translateY(-4px); }
+#sg-top-hand .sg-hp{ cursor:default; transform:rotate(180deg); } /* 相手の持ち駒は逆向き */
+  
   /* ---- 神経衰弱の盤面 ---- */
   .sk-grid{
     display:grid; grid-template-columns:repeat(13, 1fr); gap:6px;
