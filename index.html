@@ -1269,6 +1269,7 @@ function enterRoom(roomId){
       document.getElementById("sg-room-name-label").textContent = data.roomName || "";
       showScreen("shogi-table");
       sgRender(data);
+      maybeSgNpcAct(data);   // ← この1行を追加
     } else {
       document.getElementById("room-code-label").textContent = roomId;
       document.getElementById("room-name-label").textContent = data.roomName || "";
