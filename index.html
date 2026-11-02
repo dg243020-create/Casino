@@ -441,6 +441,26 @@ window.addEventListener("unhandledrejection", function(e){
 }
 .sg-hp.sel{ background:linear-gradient(180deg,#ffe27a,#ffc933); transform:translateY(-4px); }
 #sg-top-hand .sg-hp{ cursor:default; transform:rotate(180deg); } /* 相手の持ち駒は逆向き */
+
+/* ★ 将棋: スクロールなしで全部を画面内に収める ★ */
+#shogi-table .table-wrap{
+  display:flex;
+  container-type:size;              /* 枠の高さを基準に盤の大きさを決められるようにする */
+  overflow:hidden !important;       /* スクロールバーを出さない */
+}
+#shogi-table .sg-wrap{
+  height:100%;
+  justify-content:center;
+  gap:4px;
+  padding:4px 8px;
+}
+#shogi-table .sg-hand{ min-height:40px; }
+#shogi-table .sg-info{ padding:2px 12px; font-size:.9rem; }
+#shogi-table .sg-board{
+  flex:0 0 auto;
+  width:min(94%, 480px, calc(100dvh - 400px));   /* 古いブラウザ用の予備 */
+  width:min(94%, 480px, calc(100cqh - 170px));   /* 枠の高さ − 持ち駒・名前の分 */
+}
   
   /* ---- 神経衰弱の盤面 ---- */
   .sk-grid{
