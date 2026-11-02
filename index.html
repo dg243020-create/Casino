@@ -4808,7 +4808,7 @@ function sgRenderActions(data, st){
     msgEl.textContent = tp.isNPC ? `🤖 ${tp.name} が考え中…` : `${nameOf(turnPid)} さんの番です…`;
   }
   mkBtn("投了", ()=>{ if(window.confirm("投了しますか?")) sgResign(); }, true);
-
+}
     
 /* ================================================================
    部屋内チャット(その部屋にいる人だけに見える、全ゲーム共通の簡易チャット)
