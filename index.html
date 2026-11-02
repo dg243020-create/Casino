@@ -4214,33 +4214,38 @@ async function sgStartGame(){
   });
 }
 
+// 1手指す処理の本体(人間もNPCもこれを通す)。不正ならnullを返す
+function sgApplyMoveCore(data, pid, req){
+  if(!data || data.game!=="shogi" || data.phase!=="playing") return null;
+  const side = data.turn;
+  const turnPid = side==="b" ? data.sente : data.gote;
+  if(turnPid!==pid) return null;
+
+  const board = sgBoardOf(data), hands = sgHandsOf(data);
+  const legal = sgLegalMoves(board, hands, side, false);
+  const m = legal.find(x=>
+    x.from===req.from && x.to===req.to &&
+    !!x.promote===!!req.promote && (x.drop||"")===(req.drop||""));
+  if(!m) return null;
+
+  const r = sgApply(board, hands, side, m);
+  const opp = side==="b" ? "w" : "b";
+  data.board = r.board;
+  data.hands = r.hands;
+  data.lastMove = { from:m.from, to:m.to, ts:Date.now() };
+  data.moveCount = (data.moveCount||0) + 1;
+  data.turn = opp;
+  if(sgLegalMoves(r.board, r.hands, opp, false).length===0){
+    data.phase = "gameover";
+    data.winner = side;
+    data.reason = "詰み";
+  }
+  return data;
+}
+
 async function sgSubmitMove(req){
   await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
-    if(!data || data.game!=="shogi" || data.phase!=="playing") return data;
-    const side = data.turn;
-    const pid = side==="b" ? data.sente : data.gote;
-    if(pid!==myId) return data;
-
-    const board = sgBoardOf(data), hands = sgHandsOf(data);
-    const legal = sgLegalMoves(board, hands, side, false);
-    const m = legal.find(x=>
-      x.from===req.from && x.to===req.to &&
-      !!x.promote===!!req.promote && (x.drop||"")===(req.drop||""));
-    if(!m) return data;
-
-    const r = sgApply(board, hands, side, m);
-    const opp = side==="b" ? "w" : "b";
-    data.board = r.board;
-    data.hands = r.hands;
-    data.lastMove = { from:m.from, to:m.to, ts:Date.now() };
-    data.moveCount = (data.moveCount||0) + 1;
-    data.turn = opp;
-    if(sgLegalMoves(r.board, r.hands, opp, false).length===0){
-      data.phase = "gameover";
-      data.winner = side;
-      data.reason = "詰み";
-    }
-    return data;
+    return sgApplyMoveCore(data, myId, req) || data;
   });
 }
 
@@ -4265,6 +4270,282 @@ async function sgBackToWaiting(){
   });
 }
 
+/* ================================================================
+   将棋 NPC(ホストのブラウザが考えて指す)
+   ================================================================ */
+const SG_NPC_LEVELS = { 1:"弱", 2:"中", 3:"ゲキムズ" };
+const SG_HARD_MS = 2200;   // レベル3の持ち時間(ms)。増やすほど強くなるが、考え中に画面が固まる時間も伸びる
+const SG_VAL = { FU:100, KY:300, KE:350, GI:450, KI:500, KA:850, HI:1000, OU:0,
+                 TO:520, NY:480, NK:480, NG:500, UM:1100, RY:1300 };
+const SG_MATE = 100000;
+let sgNodes = 0, sgDeadline = 0, sgAbort = false, sgQDepth = 0;
+let sgNpcTimer = null, sgNpcBusy = false;
+
+/* ---- NPCの追加・難易度変更・削除(ホストのみ) ---- */
+async function sgSetNpc(level){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shogi" || data.hostId!==myId) return data;
+    if(data.phase==="playing") return data;
+    const order = data.turnOrder || [];
+    const players = data.players || {};
+    const npcPid = order.find(pid=>players[pid] && players[pid].isNPC);
+    data.npcLevel = level;
+    if(npcPid){ players[npcPid].name = "NPC("+SG_NPC_LEVELS[level]+")"; return data; }
+    if(order.length>=2) return data;
+    const used = order.map(pid=>(players[pid]||{}).seat||0);
+    let seat = 0; while(used.includes(seat)) seat++;
+    const npcId = "npc_"+Math.random().toString(36).slice(2,8);
+    players[npcId] = { name:"NPC("+SG_NPC_LEVELS[level]+")", seat, online:true, isNPC:true };
+    order.push(npcId);
+    data.turnOrder = order;
+    data.players = players;
+    return data;
+  });
+}
+
+async function sgRemoveNpc(){
+  await runTransaction(ref(db, `rooms/${currentRoom}`), (data)=>{
+    if(!data || data.game!=="shogi" || data.hostId!==myId) return data;
+    if(data.phase==="playing") return data;
+    const order = data.turnOrder || [];
+    const npcPid = order.find(pid=>data.players[pid] && data.players[pid].isNPC);
+    if(!npcPid) return data;
+    data.turnOrder = order.filter(pid=>pid!==npcPid);
+    delete data.players[npcPid];
+    data.npcLevel = null;
+    if(data.phase==="gameover") data.phase = "waiting";
+    return data;
+  });
+}
+
+/* ---- 手の生成(王手放置などは見ない高速版。探索用) ----
+   mode: "all"=全部 / "near"=打つ手を駒の周囲に限定 / "cap"=駒を取る手だけ */
+function sgPseudoMoves(board, hands, side, mode){
+  const out = [];
+  for(let i=0;i<81;i++){
+    const p = board[i];
+    if(!p || p[0]!==side) continue;
+    const type = sgType(p);
+    const fromRow = Math.floor(i/9);
+    for(const t of sgPseudoTargets(board,i)){
+      const cap = board[t];
+      if(mode==="cap" && !cap) continue;
+      const row = Math.floor(t/9);
+      const canPromo = !!SG_PROMOTE[type] && (sgInPromoZone(side,row) || sgInPromoZone(side,fromRow));
+      const must = sgMustPromote(type, side, row);
+      const capVal = cap ? (sgType(cap)==="OU" ? 100000 : (SG_VAL[sgType(cap)]||0)) : 0;
+      if(canPromo) out.push({ from:i, to:t, promote:true,  o:capVal*10 + 300 });
+      if(!must)    out.push({ from:i, to:t, promote:false, o:capVal*10 - (SG_VAL[type]||0)/10 });
+    }
+  }
+  if(mode!=="cap"){
+    let near = null;
+    if(mode==="near"){
+      near = new Array(81).fill(false);
+      for(let i=0;i<81;i++){
+        if(!board[i]) continue;
+        const r = Math.floor(i/9), c = i%9;
+        for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+          const nr=r+dr, nc=c+dc;
+          if(nr>=0 && nr<9 && nc>=0 && nc<9) near[nr*9+nc] = true;
+        }
+      }
+    }
+    for(const type of SG_HAND_ORDER){
+      if((hands[side][type]||0)<=0) continue;
+      let pawnCols = null;
+      if(type==="FU"){
+        pawnCols = new Array(9).fill(false);
+        for(let i=0;i<81;i++){ if(board[i]===side+"FU") pawnCols[i%9] = true; }
+      }
+      for(let t=0;t<81;t++){
+        if(board[t]) continue;
+        if(near && !near[t]) continue;
+        if(sgMustPromote(type, side, Math.floor(t/9))) continue;
+        if(type==="FU" && pawnCols[t%9]) continue;
+        out.push({ from:-1, drop:type, to:t, o:0 });
+      }
+    }
+  }
+  return out;
+}
+
+/* ---- 評価(sideから見た有利さ) ---- */
+function sgEval(board, hands, side){
+  let s = 0;
+  for(let i=0;i<81;i++){
+    const p = board[i];
+    if(!p) continue;
+    const sd = p[0], t = sgType(p);
+    const r = Math.floor(i/9);
+    const adv = sd==="b" ? 8-r : r;            // どれだけ敵陣側へ進んだか
+    let v = SG_VAL[t] || 0;
+    if(t==="OU") v -= adv*8;                   // 玉は前に出ない方がよい
+    else v += adv * (t==="FU" ? 5 : (t==="KI"||t==="GI" ? 3 : 1));
+    s += (sd===side ? v : -v);
+  }
+  ["b","w"].forEach(sd=>{
+    SG_HAND_ORDER.forEach(t=>{
+      const n = hands[sd][t] || 0;
+      if(n) s += (sd===side ? 1 : -1) * n * SG_VAL[t] * 1.1;
+    });
+  });
+  return s;
+}
+
+function sgTick(){
+  if((++sgNodes & 255)===0 && Date.now()>sgDeadline) sgAbort = true;
+  return sgAbort;
+}
+
+/* 取り合いの先まで読む(水平線効果を減らす) */
+function sgQuiesce(board, hands, side, alpha, beta, qd, ply){
+  if(sgTick()) return 0;
+  const opp = side==="b" ? "w" : "b";
+  const moves = sgPseudoMoves(board, hands, side, "cap");
+  moves.sort((a,b)=>b.o-a.o);
+  if(moves.length && moves[0].o>=1000000) return SG_MATE - ply;   // 相手の玉が取れる
+  const stand = sgEval(board, hands, side);
+  if(stand>=beta) return stand;
+  if(stand>alpha) alpha = stand;
+  if(qd<=0) return stand;
+  for(const m of moves){
+    const r = sgApply(board, hands, side, m);
+    const sc = -sgQuiesce(r.board, r.hands, opp, -beta, -alpha, qd-1, ply+1);
+    if(sgAbort) return 0;
+    if(sc>=beta) return sc;
+    if(sc>alpha) alpha = sc;
+  }
+  return alpha;
+}
+
+function sgNegamax(board, hands, side, depth, alpha, beta, ply){
+  if(sgTick()) return 0;
+  const opp = side==="b" ? "w" : "b";
+  if(depth<=0) return sgQuiesce(board, hands, side, alpha, beta, sgQDepth, ply);
+  const moves = sgPseudoMoves(board, hands, side, "near");
+  moves.sort((a,b)=>b.o-a.o);
+  if(moves.length && moves[0].o>=1000000) return SG_MATE - ply;  // 相手の玉が取れる=勝ち
+  let best = -Infinity;
+  for(const m of moves){
+    const r = sgApply(board, hands, side, m);
+    const sc = -sgNegamax(r.board, r.hands, opp, depth-1, -beta, -alpha, ply+1);
+    if(sgAbort) return 0;
+    if(sc>best) best = sc;
+    if(sc>alpha) alpha = sc;
+    if(alpha>=beta) break;
+  }
+  return best===-Infinity ? -SG_MATE + ply : best;
+}
+
+// 一手詰めがあればその手を返す(なければnull)
+function sgFindMateInOne(board, hands, side, legal){
+  const opp = side==="b" ? "w" : "b";
+  for(const m of legal){
+    const r = sgApply(board, hands, side, m);
+    if(sgInCheck(r.board, opp) && sgLegalMoves(r.board, r.hands, opp, false).length===0) return m;
+  }
+  return null;
+}
+
+/* ---- レベル1: ほぼランダム ---- */
+function sgNpcPickEasy(board, hands, side, legal){
+  const caps = legal.filter(m=> m.from>=0 && board[m.to]);
+  if(caps.length && Math.random()<0.5) return caps[Math.floor(Math.random()*caps.length)];
+  return legal[Math.floor(Math.random()*legal.length)];
+}
+
+/* ---- レベル2: 2手読み+ちょっとミスする ---- */
+function sgNpcPickMid(board, hands, side, legal){
+  const opp = side==="b" ? "w" : "b";
+  const mate = sgFindMateInOne(board, hands, side, legal);
+  if(mate) return mate;
+  sgNodes = 0; sgAbort = false; sgDeadline = Date.now()+4000; sgQDepth = 0;
+  const scored = legal.map(m=>{
+    const r = sgApply(board, hands, side, m);
+    return { m, s: -sgNegamax(r.board, r.hands, opp, 1, -Infinity, Infinity, 1) };
+  });
+  const top = Math.max(...scored.map(x=>x.s));
+  const cands = scored.filter(x=> x.s >= top-30);   // ほぼ互角の手の中からランダムに選ぶ
+  return cands[Math.floor(Math.random()*cands.length)].m;
+}
+
+/* ---- レベル3: 時間制限つき反復深化(3〜4手読み+取り合い探索) ---- */
+function sgNpcPickHard(board, hands, side, legal){
+  const opp = side==="b" ? "w" : "b";
+  const mate = sgFindMateInOne(board, hands, side, legal);
+  if(mate) return mate;
+  sgNodes = 0; sgAbort = false; sgDeadline = Date.now()+SG_HARD_MS; sgQDepth = 4;
+
+  const scored = legal.map(m=>({
+    m, s:undefined,
+    o: (m.from>=0 && board[m.to] ? (SG_VAL[sgType(board[m.to])]||0)*10 : 0) + (m.promote ? 300 : 0)
+  }));
+  scored.sort((a,b)=>b.o-a.o);
+  let bestMove = scored[0].m;
+
+  for(let depth=1; depth<=4; depth++){
+    let alpha = -Infinity, curBest = null, curScore = -Infinity;
+    for(const it of scored){
+      const r = sgApply(board, hands, side, it.m);
+      const sc = -sgNegamax(r.board, r.hands, opp, depth-1, -Infinity, -alpha, 1) + Math.random()*3;
+      if(sgAbort) break;
+      it.s = sc;
+      if(sc>curScore){ curScore = sc; curBest = it.m; alpha = sc; }
+    }
+    if(sgAbort) break;           // 時間切れ: この深さの途中結果は使わない
+    if(curBest) bestMove = curBest;
+    if(curScore > SG_MATE-100) break;   // 詰みが見つかった
+    scored.sort((a,b)=> (b.s===undefined ? -1e9 : b.s) - (a.s===undefined ? -1e9 : a.s));
+  }
+  return bestMove;
+}
+
+function sgNpcChoose(data){
+  const side = data.turn;
+  const board = sgBoardOf(data), hands = sgHandsOf(data);
+  const legal = sgLegalMoves(board, hands, side, false);
+  if(legal.length===0) return null;
+  const level = data.npcLevel || 1;
+  let m;
+  if(level>=3)       m = sgNpcPickHard(board, hands, side, legal);
+  else if(level===2) m = sgNpcPickMid(board, hands, side, legal);
+  else               m = sgNpcPickEasy(board, hands, side, legal);
+  return { from:m.from, to:m.to, promote:!!m.promote, drop:m.drop||"" };
+}
+
+/* ---- NPCの手番になったらホストが指す ---- */
+function maybeSgNpcAct(data){
+  clearTimeout(sgNpcTimer);
+  if(!isHost || !data || data.game!=="shogi" || data.phase!=="playing") return;
+  const turnPid = data.turn==="b" ? data.sente : data.gote;
+  const p = data.players && data.players[turnPid];
+  if(!p || !p.isNPC) return;
+  const expect = data.moveCount || 0;
+  sgNpcTimer = setTimeout(()=>{ sgNpcAct(expect); }, 900);
+}
+
+async function sgNpcAct(expectCount){
+  if(sgNpcBusy) return;
+  const data = sgData;
+  if(!data || data.phase!=="playing" || (data.moveCount||0)!==expectCount) return;
+  const turnPid = data.turn==="b" ? data.sente : data.gote;
+  const p = data.players[turnPid];
+  if(!p || !p.isNPC) return;
+  sgNpcBusy = true;
+  try{
+    await new Promise(r=>setTimeout(r, 30));   // 「考え中」の表示を先に描画させる
+    const req = sgNpcChoose(data);
+    if(!req) return;
+    await runTransaction(ref(db, `rooms/${currentRoom}`), (d)=>{
+      if(!d || (d.moveCount||0)!==expectCount) return d;
+      return sgApplyMoveCore(d, turnPid, req) || d;
+    });
+  } finally {
+    sgNpcBusy = false;
+  }
+}
+  
 document.getElementById("sg-start-btn").addEventListener("click", ()=>{ sgSelected=-1; sgDrop=""; sgPromo=null; sgStartGame(); });
 
 document.getElementById("sg-board").addEventListener("click", (e)=>{
@@ -4433,6 +4714,86 @@ function sgRenderActions(data, st){
     actionsEl.appendChild(b);
     return b;
   };
+
+  // NPCの追加・難易度変更・削除(ホストのみ。待機中と対局終了後)
+  const addNpcControls = ()=>{
+    if(!isHost) return;
+    const npcPid = order.find(pid=>data.players[pid] && data.players[pid].isNPC);
+    if(!npcPid && order.length>=2) return;   // 人間の対戦相手がいる時は出さない
+    const row = document.createElement("div");
+    row.style.cssText = "width:100%;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;margin-top:8px;";
+    const label = document.createElement("span");
+    label.style.cssText = "font-family:sans-serif;font-size:.85rem;color:var(--cream-dim);";
+    label.textContent = npcPid ? "🤖 NPCの強さ:" : "🤖 NPCと対戦:";
+    row.appendChild(label);
+    [1,2,3].forEach(lv=>{
+      const b = document.createElement("button");
+      const current = !!npcPid && data.npcLevel===lv;
+      b.className = "btn small" + (current ? "" : " ghost");
+      b.textContent = `${lv} ${SG_NPC_LEVELS[lv]}`;
+      b.onclick = ()=> sgSetNpc(lv);
+      row.appendChild(b);
+    });
+    if(npcPid){
+      const del = document.createElement("button");
+      del.className = "btn small ghost";
+      del.textContent = "NPCを外す";
+      del.onclick = ()=> sgRemoveNpc();
+      row.appendChild(del);
+    }
+    actionsEl.appendChild(row);
+  };
+
+  // 開始/再戦ボタン
+  const canStart = isHost && ((data.phase==="waiting" && order.length===2) || data.phase==="gameover");
+  startBtn.style.display = canStart ? "inline-block" : "none";
+  startBtn.textContent = data.phase==="gameover" ? "もう一度あそぶ(ホスト)" : "対局開始(ホスト)";
+
+  if(data.phase==="waiting"){
+    msgEl.textContent = isHost
+      ? (order.length===2 ? "準備ができたら対局を開始できます。先手後手はランダムです。" : "もう1人集まったら開始できます。NPCとも対戦できます。")
+      : "ホストが対局を開始するのを待っています…";
+    addNpcControls();
+    return;
+  }
+
+  const nameOf = pid => (data.players[pid] || {}).name || "?";
+  if(data.phase==="gameover"){
+    const wpid = data.winner==="b" ? data.sente : data.gote;
+    msgEl.textContent = `🏆 ${nameOf(wpid)} さんの勝ち!(${data.reason||""})` + (isHost ? "  もう一度あそべます。" : "");
+    addNpcControls();
+    return;
+  }
+
+  // 対局中: 相手が退室していないか
+  const absent = [data.sente, data.gote].some(pid=>!data.players[pid]);
+  if(absent){
+    msgEl.textContent = "対戦相手が退室しました。";
+    if(isHost) mkBtn("対局を終了して待機に戻す", ()=>sgBackToWaiting());
+    return;
+  }
+
+  const turnPid = data.turn==="b" ? data.sente : data.gote;
+  if(!st.mySide){
+    msgEl.textContent = `観戦中 ・ ${nameOf(turnPid)} さんの番です`;
+    return;
+  }
+
+  if(st.myTurn){
+    if(sgPromo){
+      msgEl.textContent = "成りますか?";
+      mkBtn("成る", ()=>{ const q=sgPromo; sgPromo=null; sgSelected=-1; sgSubmitMove({from:q.from,to:q.to,promote:true}); });
+      mkBtn("成らない", ()=>{ const q=sgPromo; sgPromo=null; sgSelected=-1; sgSubmitMove({from:q.from,to:q.to,promote:false}); }, true);
+      mkBtn("キャンセル", ()=>{ sgPromo=null; sgRender(sgData); }, true);
+      return;
+    }
+    msgEl.textContent = st.inCheck ? "⚠ 王手されています!あなたの番です" : "あなたの番です。動かす駒か持ち駒をタップしてね";
+  } else {
+    const tp = data.players[turnPid] || {};
+    msgEl.textContent = tp.isNPC ? `🤖 ${tp.name} が考え中…` : `${nameOf(turnPid)} さんの番です…`;
+  }
+  mkBtn("投了", ()=>{ if(window.confirm("投了しますか?")) sgResign(); }, true);
+}
 
   // 開始/再戦ボタン
   const canStart = isHost && ((data.phase==="waiting" && order.length===2) || data.phase==="gameover");
