@@ -4808,55 +4808,7 @@ function sgRenderActions(data, st){
     msgEl.textContent = tp.isNPC ? `🤖 ${tp.name} が考え中…` : `${nameOf(turnPid)} さんの番です…`;
   }
   mkBtn("投了", ()=>{ if(window.confirm("投了しますか?")) sgResign(); }, true);
-}
 
-  // 開始/再戦ボタン
-  const canStart = isHost && ((data.phase==="waiting" && order.length===2) || data.phase==="gameover");
-  startBtn.style.display = canStart ? "inline-block" : "none";
-  startBtn.textContent = data.phase==="gameover" ? "もう一度あそぶ(ホスト)" : "対局開始(ホスト)";
-
-  if(data.phase==="waiting"){
-    msgEl.textContent = isHost
-      ? (order.length===2 ? "準備ができたら対局を開始できます。先手後手はランダムです。" : "もう1人集まったら開始できます。")
-      : "ホストが対局を開始するのを待っています…";
-    return;
-  }
-
-  const nameOf = pid => (data.players[pid] || {}).name || "?";
-  if(data.phase==="gameover"){
-    const wpid = data.winner==="b" ? data.sente : data.gote;
-    msgEl.textContent = `🏆 ${nameOf(wpid)} さんの勝ち!(${data.reason||""})` + (isHost ? "  もう一度あそべます。" : "");
-    return;
-  }
-
-  // 対局中: 相手が退室していないか
-  const absent = [data.sente, data.gote].some(pid=>!data.players[pid]);
-  if(absent){
-    msgEl.textContent = "対戦相手が退室しました。";
-    if(isHost) mkBtn("対局を終了して待機に戻す", ()=>sgBackToWaiting());
-    return;
-  }
-
-  const turnPid = data.turn==="b" ? data.sente : data.gote;
-  if(!st.mySide){
-    msgEl.textContent = `観戦中 ・ ${nameOf(turnPid)} さんの番です`;
-    return;
-  }
-
-  if(st.myTurn){
-    if(sgPromo){
-      msgEl.textContent = "成りますか?";
-      mkBtn("成る", ()=>{ const q=sgPromo; sgPromo=null; sgSelected=-1; sgSubmitMove({from:q.from,to:q.to,promote:true}); });
-      mkBtn("成らない", ()=>{ const q=sgPromo; sgPromo=null; sgSelected=-1; sgSubmitMove({from:q.from,to:q.to,promote:false}); }, true);
-      mkBtn("キャンセル", ()=>{ sgPromo=null; sgRender(sgData); }, true);
-      return;
-    }
-    msgEl.textContent = st.inCheck ? "⚠ 王手されています!あなたの番です" : "あなたの番です。動かす駒か持ち駒をタップしてね";
-  } else {
-    msgEl.textContent = `${nameOf(turnPid)} さんの番です…`;
-  }
-  mkBtn("投了", ()=>{ if(window.confirm("投了しますか?")) sgResign(); }, true);
-}
     
 /* ================================================================
    部屋内チャット(その部屋にいる人だけに見える、全ゲーム共通の簡易チャット)
