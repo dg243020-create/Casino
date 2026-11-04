@@ -4308,7 +4308,7 @@ async function sgBackToWaiting(){
 /* ================================================================
    将棋 NPC(ホストのブラウザが考えて指す)
    ================================================================ */
-const SG_NPC_LEVELS = { 1:"弱", 2:"中", 3:"ゲキムズ" };
+const SG_NPC_LEVELS = { 1:"弱", 2:"中", 3:"ゲキムズ", 4:"エターナル", 5:"アルティメット" };
 const SG_HARD_MS = 2200;   // レベル3の持ち時間(ms)。増やすほど強くなるが、考え中に画面が固まる時間も伸びる
 const SG_VAL = { FU:100, KY:300, KE:350, GI:450, KI:500, KA:850, HI:1000, OU:0,
                  TO:520, NY:480, NK:480, NG:500, UM:1100, RY:1300 };
@@ -4570,8 +4570,8 @@ async function sgNpcAct(expectCount){
   sgNpcBusy = true;
   try{
     await new Promise(r=>setTimeout(r, 30));   // 「考え中」の表示を先に描画させる
-    const req = sgNpcChoose(data);
-    if(!req) return;
+    const req = (data.npcLevel||1)>=4 ? await sgNpcChooseStrong(data) : sgNpcChoose(data);
+    if(!req || !currentRoom) return;
     await runTransaction(ref(db, `rooms/${currentRoom}`), (d)=>{
       if(!d || (d.moveCount||0)!==expectCount) return d;
       return sgApplyMoveCore(d, turnPid, req) || d;
@@ -4580,7 +4580,596 @@ async function sgNpcAct(expectCount){
     sgNpcBusy = false;
   }
 }
-  
+
+const SG_ETERNAL_MS = 5000;     // レベル4の持ち時間(ms)
+const SG_ULTIMATE_MS = 15000;   // レベル5の持ち時間(ms)
+let sgWorker = null;
+
+function sgGetWorker(){
+  if(sgWorker) return sgWorker;
+  try{
+    const src = "(" + sgEngineMain.toString() + ")();";
+    const url = URL.createObjectURL(new Blob([src], { type:"text/javascript" }));
+    sgWorker = new Worker(url);
+  }catch(e){ sgWorker = null; }
+  return sgWorker;
+}
+
+function sgWorkerThink(board, hands, side, legal, ms){
+  return new Promise((resolve)=>{
+    const w = sgGetWorker();
+    if(!w){ resolve(null); return; }
+    let done = false, timer = null;
+    const finish = (v)=>{
+      if(done) return;
+      done = true; clearTimeout(timer);
+      w.onmessage = null; w.onerror = null;
+      resolve(v);
+    };
+    timer = setTimeout(()=>{ try{ w.terminate(); }catch(e){} sgWorker = null; finish(null); }, ms + 10000);
+    w.onmessage = (e)=> finish(e.data && !e.data.error ? e.data : null);
+    w.onerror = ()=>{ sgWorker = null; finish(null); };
+    w.postMessage({ board, hands, side, legal, ms });
+  });
+}
+
+async function sgNpcChooseStrong(data){
+  const side = data.turn;
+  const board = sgBoardOf(data), hands = sgHandsOf(data);
+  const legal = sgLegalMoves(board, hands, side, false);
+  if(legal.length===0) return null;
+  const toReq = (m)=>({ from:m.from, to:m.to, promote:!!m.promote, drop:m.drop||"" });
+  if(legal.length===1) return toReq(legal[0]);
+  const mate = sgFindMateInOne(board, hands, side, legal);
+  if(mate) return toReq(mate);
+  const ms = (data.npcLevel||1)>=5 ? SG_ULTIMATE_MS : SG_ETERNAL_MS;
+  const res = await sgWorkerThink(board, hands, side, legal, ms);
+  if(res){
+    const ok = legal.some(x=> x.from===res.from && x.to===res.to && !!x.promote===!!res.promote && (x.drop||"")===(res.drop||""));
+    if(ok) return toReq(res);
+  }
+  return sgNpcChoose(data);   // Workerが使えない時は、従来のレベル3で代用
+}  
+
+function sgEngineMain(){
+  "use strict";
+  var FU=1,KY=2,KE=3,GI=4,KI=5,KA=6,HI=7,OU=8,TO=9,NY=10,NK=11,NG=12,UM=13,RY=14;
+  var TYPE_NAME=["","FU","KY","KE","GI","KI","KA","HI","OU","TO","NY","NK","NG","UM","RY"];
+  var NAME_TYPE={};
+  for(var i0=1;i0<=14;i0++) NAME_TYPE[TYPE_NAME[i0]]=i0;
+  var PROMOTED=[0,TO,NY,NK,NG,0,UM,RY,0,0,0,0,0,0,0];
+  var DEMOTED=[0,FU,KY,KE,GI,KI,KA,HI,OU,FU,KY,KE,GI,KA,HI];
+  var VAL=[0,90,315,405,495,540,855,990,0,540,540,540,540,945,1395];
+  var DR=[-1,-1,-1,0,0,1,1,1], DC=[-1,0,1,-1,1,-1,0,1];
+  var MIR=[5,6,7,3,4,0,1,2];
+  var INF=1000000, MATE=100000, MAXPLY=96;
+
+  function mk(list){ var m=0; for(var i=0;i<list.length;i++) m|=1<<list[i]; return m; }
+  var GOLD=mk([0,1,2,3,4,6]);
+  var DIAG=mk([0,2,5,7]), ORTH=mk([1,3,4,6]);
+  var BSTEP=[0,mk([1]),0,0,mk([0,1,2,5,7]),GOLD,0,0,mk([0,1,2,3,4,5,6,7]),GOLD,GOLD,GOLD,GOLD,ORTH,DIAG];
+  var BSLIDE=[0,0,mk([1]),0,0,0,DIAG,ORTH,0,0,0,0,0,DIAG,ORTH];
+  function mirror(m){ var r=0; for(var d=0;d<8;d++) if(m&(1<<d)) r|=1<<MIR[d]; return r; }
+  var STEP=[BSTEP,BSTEP.map(mirror)], SLIDE=[BSLIDE,BSLIDE.map(mirror)];
+
+  var ROW=new Int8Array(81), COL=new Int8Array(81);
+  for(var s0=0;s0<81;s0++){ ROW[s0]=(s0/9)|0; COL[s0]=s0%9; }
+
+  /* ---- Zobrist ---- */
+  var seed=2463534242;
+  function rnd(){ seed^=seed<<13; seed^=seed>>>17; seed^=seed<<5; return seed|0; }
+  var ZB1=new Int32Array(81*32), ZB2=new Int32Array(81*32);
+  var ZH1=new Int32Array(16*20), ZH2=new Int32Array(16*20);
+  var i1;
+  for(i1=0;i1<ZB1.length;i1++){ ZB1[i1]=rnd(); ZB2[i1]=rnd(); }
+  for(i1=0;i1<ZH1.length;i1++){ ZH1[i1]=rnd(); ZH2[i1]=rnd(); }
+  var ZS1=rnd(), ZS2=rnd();
+
+  /* ---- 局面 ---- */
+  var board=new Int8Array(81), hands=new Int8Array(16), ksq=[0,0];
+  var side=0, h1=0, h2=0, sp=0;
+  var capStack=new Int8Array(256), h1Stack=new Int32Array(256), h2Stack=new Int32Array(256);
+
+  function recomputeHash(){
+    h1=0; h2=0;
+    for(var sq=0;sq<81;sq++){
+      var p=board[sq];
+      if(p){ h1^=ZB1[sq*32+p]; h2^=ZB2[sq*32+p]; if((p&15)===OU) ksq[p>>4]=sq; }
+    }
+    for(var idx=0;idx<16;idx++){ h1^=ZH1[idx*20+hands[idx]]; h2^=ZH2[idx*20+hands[idx]]; }
+    if(side){ h1^=ZS1; h2^=ZS2; }
+  }
+
+  function make(m){
+    var from=m&255, to=(m>>8)&255, promo=(m>>16)&1;
+    var us=side, cap=0, moved, idx, c, np;
+    h1Stack[sp]=h1; h2Stack[sp]=h2;
+    if(from>=128){
+      var t=from-128;
+      moved=t|(us<<4);
+      idx=us*8+t; c=hands[idx];
+      h1^=ZH1[idx*20+c]^ZH1[idx*20+c-1]; h2^=ZH2[idx*20+c]^ZH2[idx*20+c-1];
+      hands[idx]=c-1;
+      board[to]=moved;
+      h1^=ZB1[to*32+moved]; h2^=ZB2[to*32+moved];
+    } else {
+      moved=board[from]; cap=board[to];
+      h1^=ZB1[from*32+moved]; h2^=ZB2[from*32+moved];
+      board[from]=0;
+      if(cap){
+        h1^=ZB1[to*32+cap]; h2^=ZB2[to*32+cap];
+        idx=us*8+DEMOTED[cap&15]; c=hands[idx];
+        h1^=ZH1[idx*20+c]^ZH1[idx*20+c+1]; h2^=ZH2[idx*20+c]^ZH2[idx*20+c+1];
+        hands[idx]=c+1;
+      }
+      np=promo ? (PROMOTED[moved&15]|(us<<4)) : moved;
+      board[to]=np;
+      h1^=ZB1[to*32+np]; h2^=ZB2[to*32+np];
+      if((moved&15)===OU) ksq[us]=to;
+    }
+    capStack[sp]=cap;
+    h1^=ZS1; h2^=ZS2;
+    side=us^1; sp++;
+  }
+
+  function unmake(m){
+    var from=m&255, to=(m>>8)&255, promo=(m>>16)&1;
+    sp--; side^=1;
+    var us=side;
+    h1=h1Stack[sp]; h2=h2Stack[sp];
+    if(from>=128){
+      board[to]=0; hands[us*8+from-128]++;
+    } else {
+      var cap=capStack[sp], piece=board[to];
+      var moved=promo ? (DEMOTED[piece&15]|(us<<4)) : piece;
+      board[from]=moved; board[to]=cap;
+      if(cap) hands[us*8+DEMOTED[cap&15]]--;
+      if((moved&15)===OU) ksq[us]=from;
+    }
+  }
+
+  function makeNull(){
+    h1Stack[sp]=h1; h2Stack[sp]=h2; capStack[sp]=0;
+    h1^=ZS1; h2^=ZS2; side^=1; sp++;
+  }
+  function unmakeNull(){
+    sp--; side^=1; h1=h1Stack[sp]; h2=h2Stack[sp];
+  }
+
+  /* sqがby側の駒に利かされているか */
+  function attacked(sq, by){
+    var r=ROW[sq], c=COL[sq];
+    var st=STEP[by], sl=SLIDE[by];
+    for(var d=0;d<8;d++){
+      var nr=r+DR[d], nc=c+DC[d];
+      if(nr<0||nr>8||nc<0||nc>8) continue;
+      var bit=1<<(7-d);
+      var p=board[nr*9+nc];
+      if(p===0){
+        for(;;){
+          nr+=DR[d]; nc+=DC[d];
+          if(nr<0||nr>8||nc<0||nc>8) break;
+          p=board[nr*9+nc];
+          if(p!==0){ if((p>>4)===by && (sl[p&15]&bit)) return true; break; }
+        }
+      } else if((p>>4)===by){
+        var t=p&15;
+        if((st[t]&bit)||(sl[t]&bit)) return true;
+      }
+    }
+    var kr=r-2*(by===0?-1:1);
+    if(kr>=0&&kr<=8){
+      var ke=KE|(by<<4);
+      if(c>0 && board[kr*9+c-1]===ke) return true;
+      if(c<8 && board[kr*9+c+1]===ke) return true;
+    }
+    return false;
+  }
+
+  /* ---- 手生成 ---- */
+  var MOVES=[], SCORES=[];
+  for(var pl=0;pl<MAXPLY+4;pl++){ MOVES.push(new Int32Array(1024)); SCORES.push(new Int32Array(1024)); }
+  var KILL1=new Int32Array(MAXPLY+4), KILL2=new Int32Array(MAXPLY+4);
+  var HIST=new Int32Array(2*89*81);
+  function hidx(us,m){ var f=m&255; return (us*89+(f>=128?81+f-128:f))*81+((m>>8)&255); }
+
+  function genMoves(ply, capsOnly, ttMove){
+    var list=MOVES[ply], sc=SCORES[ply], n=0;
+    var us=side, f=us===0?-1:1;
+    var st=STEP[us], sl=SLIDE[us];
+    var ke=capsOnly?0:1;
+    for(var sq=0;sq<81;sq++){
+      var p=board[sq];
+      if(p===0||(p>>4)!==us) continue;
+      var t=p&15, r=ROW[sq], c=COL[sq];
+      var sm=st[t], lm=sl[t];
+      var promotable=PROMOTED[t]!==0;
+      var fromZone=us===0 ? r<=2 : r>=6;
+      var attVal=VAL[t];
+      for(var d=0;d<8;d++){
+        var bit=1<<d;
+        if(sm&bit){
+          var nr=r+DR[d], nc=c+DC[d];
+          if(nr>=0&&nr<=8&&nc>=0&&nc<=8){
+            var to=nr*9+nc, q=board[to];
+            if(!(q!==0&&(q>>4)===us) && !(capsOnly&&q===0)){
+              n=addBoardMove(list,sc,n,sq,to,t,us,q,promotable,fromZone,nr,attVal);
+            }
+          }
+        }
+        if(lm&bit){
+          var rr=r+DR[d], cc=c+DC[d];
+          while(rr>=0&&rr<=8&&cc>=0&&cc<=8){
+            var to2=rr*9+cc, q2=board[to2];
+            if(q2!==0&&(q2>>4)===us) break;
+            if(!(capsOnly&&q2===0)) n=addBoardMove(list,sc,n,sq,to2,t,us,q2,promotable,fromZone,rr,attVal);
+            if(q2!==0) break;
+            rr+=DR[d]; cc+=DC[d];
+          }
+        }
+      }
+      if(t===KE){
+        var kr=r+2*f;
+        if(kr>=0&&kr<=8){
+          for(var dc=-1;dc<=1;dc+=2){
+            var kc=c+dc;
+            if(kc<0||kc>8) continue;
+            var to3=kr*9+kc, q3=board[to3];
+            if(q3!==0&&(q3>>4)===us) continue;
+            if(capsOnly&&q3===0) continue;
+            n=addBoardMove(list,sc,n,sq,to3,t,us,q3,promotable,fromZone,kr,attVal);
+          }
+        }
+      }
+    }
+    if(!capsOnly){
+      for(var ty=1;ty<=7;ty++){
+        if(hands[us*8+ty]<=0) continue;
+        var pawnCols=null;
+        if(ty===FU){
+          pawnCols=[false,false,false,false,false,false,false,false,false];
+          for(var s2=0;s2<81;s2++){ if(board[s2]===(FU|(us<<4))) pawnCols[COL[s2]]=true; }
+        }
+        for(var to4=0;to4<81;to4++){
+          if(board[to4]!==0) continue;
+          var row=ROW[to4], far=us===0?row:8-row;
+          if((ty===FU||ty===KY)&&far===0) continue;
+          if(ty===KE&&far<=1) continue;
+          if(ty===FU&&pawnCols[COL[to4]]) continue;
+          list[n]=(128+ty)|(to4<<8); sc[n]=0; n++;
+        }
+      }
+    }
+    // 並べ替え用スコア付け(ttMove・キラー・履歴)
+    var k1=KILL1[ply], k2=KILL2[ply];
+    for(var i=0;i<n;i++){
+      var m=list[i];
+      if(m===ttMove) sc[i]=1<<30;
+      else if(sc[i]===0){
+        if(m===k1) sc[i]=900000; else if(m===k2) sc[i]=800000;
+        else sc[i]=HIST[hidx(us,m)];
+      }
+    }
+    return n;
+  }
+
+  function addBoardMove(list,sc,n,from,to,t,us,q,promotable,fromZone,toRow,attVal){
+    var toZone=us===0 ? toRow<=2 : toRow>=6;
+    var far=us===0?toRow:8-toRow;
+    var must=((t===FU||t===KY)&&far===0)||(t===KE&&far<=1);
+    var capVal=q!==0?VAL[q&15]:0;
+    var base=q!==0 ? 1000000+capVal*10-attVal/10 : 0;
+    if(promotable&&(toZone||fromZone)){
+      list[n]=from|(to<<8)|(1<<16); sc[n]=base+(q!==0?0:950000)+300; n++;
+    }
+    if(!must){
+      list[n]=from|(to<<8); sc[n]=base; n++;
+    }
+    return n;
+  }
+
+  /* ---- 評価(手番側から見た点数) ---- */
+  var ADVW=[0,3,1,3,4,2,1,2,0,0,0,0,0,0,0];
+  function evaluate(){
+    var score=[0,0];
+    var kr=[0,0], kc=[0,0];
+    var i, sq, p, us, t, r, c, adv;
+    for(sq=0;sq<81;sq++){
+      p=board[sq];
+      if(p===0) continue;
+      us=p>>4; t=p&15; r=ROW[sq]; c=COL[sq];
+      adv=us===0 ? 8-r : r;
+      if(t===OU){ kr[us]=r; kc[us]=c; continue; }
+      score[us]+=VAL[t]+ADVW[t]*adv;
+      // 竜・馬・飛・角は中央に近いほど少し良い
+      if(t===HI||t===KA||t===RY||t===UM){ score[us]+=4-Math.abs(c-4); }
+    }
+    for(i=1;i<=7;i++){
+      score[0]+=(VAL[i]*1.08)*hands[i];
+      score[1]+=(VAL[i]*1.08)*hands[8+i];
+    }
+    // 玉の安全度
+    for(us=0;us<2;us++){
+      var them=us^1, kRow=kr[us], kCol=kc[us];
+      var advK=us===0 ? 8-kRow : kRow;
+      if(advK>1) score[us]-=(advK-1)*18;
+      var guards=0, adjOwn=0, openAdj=0;
+      for(var dr=-2;dr<=2;dr++){
+        for(var dc=-2;dc<=2;dc++){
+          if(dr===0&&dc===0) continue;
+          var nr=kRow+dr, nc=kCol+dc;
+          if(nr<0||nr>8||nc<0||nc>8) continue;
+          var q=board[nr*9+nc];
+          var near=(Math.abs(dr)<=1&&Math.abs(dc)<=1);
+          if(q!==0&&(q>>4)===us){
+            var qt=q&15;
+            if(qt===KI||qt===GI||qt===TO||qt===NY||qt===NK||qt===NG) guards+=near?2:1;
+            if(near) adjOwn++;
+          } else if(near&&q===0){ openAdj++; }
+        }
+      }
+      var enemyHand=0;
+      for(i=1;i<=7;i++) enemyHand+=hands[them*8+i];
+      score[us]+=Math.min(guards,8)*14+adjOwn*6;
+      score[us]-=openAdj*(5+Math.min(enemyHand,4)*4);
+    }
+    var v=score[side]-score[side^1];
+    return v+18;
+  }
+
+  /* ---- 置換表 ---- */
+  var TTBITS=20, TTN=1<<TTBITS, TTMASK=TTN-1;
+  var tkey=new Int32Array(TTN), tscore=new Int32Array(TTN), tmove=new Int32Array(TTN);
+  var tdepth=new Int8Array(TTN), tflag=new Int8Array(TTN);
+
+  var nodes=0, deadline=0, abort=false, rootDepth=0;
+
+  function search(depth, alpha, beta, ply, canNull){
+    if((++nodes&2047)===0 && Date.now()>deadline) abort=true;
+    if(abort) return 0;
+    var us=side, them=us^1;
+    var inChk=attacked(ksq[us], them);
+    if(inChk && ply<rootDepth*2+4) depth++;
+    if(depth<=0) return qsearch(alpha,beta,ply,6);
+    if(ply>=MAXPLY-2) return evaluate();
+    var pv=(beta-alpha)>1;
+
+    var a0=-MATE+ply, b0=MATE-ply-1;
+    if(alpha<a0) alpha=a0;
+    if(beta>b0) beta=b0;
+    if(alpha>=beta) return alpha;
+
+    var ti=h1&TTMASK, ttMove=0;
+    if(tkey[ti]===h2){
+      ttMove=tmove[ti];
+      if(!pv && tdepth[ti]>=depth){
+        var ts=tscore[ti];
+        if(ts>MATE-1000) ts-=ply; else if(ts<-MATE+1000) ts+=ply;
+        var fl=tflag[ti];
+        if(fl===0) return ts;
+        if(fl===1 && ts>=beta) return ts;
+        if(fl===2 && ts<=alpha) return ts;
+      }
+    }
+
+    var staticEval=0;
+    if(!pv && !inChk){
+      staticEval=evaluate();
+      // 浅い読みでの見切り
+      if(depth<=3 && staticEval-120*depth>=beta) return staticEval-120*depth;
+      // ヌルムーブ枝刈り
+      if(canNull && depth>=3 && staticEval>=beta){
+        var R=depth>=6 ? 3 : 2;
+        makeNull();
+        var ns=-search(depth-1-R,-beta,-beta+1,ply+1,false);
+        unmakeNull();
+        if(abort) return 0;
+        if(ns>=beta) return ns>MATE-1000 ? beta : ns;
+      }
+    }
+
+    var n=genMoves(ply,false,ttMove);
+    var list=MOVES[ply], sc=SCORES[ply];
+    var best=-INF, bestMove=0, legal=0, alpha0=alpha;
+
+    for(var i=0;i<n;i++){
+      // 選択ソート
+      var bi=i, bs=sc[i];
+      for(var j=i+1;j<n;j++){ if(sc[j]>bs){ bs=sc[j]; bi=j; } }
+      var m=list[bi]; list[bi]=list[i]; list[i]=m;
+      sc[bi]=sc[i]; sc[i]=bs;
+
+      var from=m&255, to=(m>>8)&255, promo=(m>>16)&1;
+      var isCap=from<128 && board[to]!==0;
+      make(m);
+      if(attacked(ksq[us], them)){ unmake(m); continue; }
+      legal++;
+      var quiet=!isCap && !promo;
+      var givesCheck=false;
+      if(quiet || depth<=2) givesCheck=attacked(ksq[them], us);
+
+      // 後ろ向き枝刈り
+      if(!pv && !inChk && quiet && !givesCheck && depth<=2 && legal>1 && staticEval+250*depth<=alpha){
+        unmake(m); continue;
+      }
+
+      var score;
+      var newDepth=depth-1;
+      if(legal===1){
+        score=-search(newDepth,-beta,-alpha,ply+1,true);
+      } else {
+        var red=0;
+        if(depth>=3 && quiet && !inChk && !givesCheck && legal>4){
+          red=1;
+          if(legal>10 && depth>=6) red=2;
+        }
+        score=-search(newDepth-red,-alpha-1,-alpha,ply+1,true);
+        if(score>alpha && red>0) score=-search(newDepth,-alpha-1,-alpha,ply+1,true);
+        if(score>alpha && score<beta) score=-search(newDepth,-beta,-alpha,ply+1,true);
+      }
+      unmake(m);
+      if(abort) return 0;
+
+      if(score>best){
+        best=score; bestMove=m;
+        if(score>alpha){
+          alpha=score;
+          if(alpha>=beta){
+            if(quiet){
+              if(KILL1[ply]!==m){ KILL2[ply]=KILL1[ply]; KILL1[ply]=m; }
+              var hi=hidx(us,m);
+              HIST[hi]+=depth*depth;
+              if(HIST[hi]>16000) HIST[hi]=16000;
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if(legal===0) return -MATE+ply;
+
+    // 置換表に保存
+    var flag=best>=beta ? 1 : (best>alpha0 ? 0 : 2);
+    var store=best;
+    if(store>MATE-1000) store+=ply; else if(store<-MATE+1000) store-=ply;
+    if(tkey[ti]!==h2 || depth>=tdepth[ti]-1){
+      tkey[ti]=h2; tscore[ti]=store; tmove[ti]=bestMove; tdepth[ti]=depth; tflag[ti]=flag;
+    }
+    return best;
+  }
+
+  /* 取り合い・王手回避の先まで読む */
+  function qsearch(alpha, beta, ply, qd){
+    if((++nodes&2047)===0 && Date.now()>deadline) abort=true;
+    if(abort) return 0;
+    var us=side, them=us^1;
+    if(ply>=MAXPLY-2) return evaluate();
+    var inChk=attacked(ksq[us], them);
+    var best=-INF, stand=0;
+    var n, list, sc, legal=0;
+    if(!inChk){
+      stand=evaluate();
+      if(stand>=beta) return stand;
+      if(stand>alpha) alpha=stand;
+      best=stand;
+      if(qd<=0) return stand;
+      n=genMoves(ply,true,0);
+    } else {
+      n=genMoves(ply,false,0);
+    }
+    list=MOVES[ply]; sc=SCORES[ply];
+    for(var i=0;i<n;i++){
+      var bi=i, bs=sc[i];
+      for(var j=i+1;j<n;j++){ if(sc[j]>bs){ bs=sc[j]; bi=j; } }
+      var m=list[bi]; list[bi]=list[i]; list[i]=m;
+      sc[bi]=sc[i]; sc[i]=bs;
+      var to=(m>>8)&255, from=m&255;
+      if(!inChk && from<128){
+        var q=board[to];
+        if(q!==0 && stand+VAL[q&15]+260<alpha) continue;   // デルタ枝刈り
+      }
+      make(m);
+      if(attacked(ksq[us], them)){ unmake(m); continue; }
+      legal++;
+      var score=-qsearch(-beta,-alpha,ply+1,qd-1);
+      unmake(m);
+      if(abort) return 0;
+      if(score>best){ best=score; if(score>alpha){ alpha=score; if(alpha>=beta) return score; } }
+    }
+    if(inChk && legal===0) return -MATE+ply;
+    return best;
+  }
+
+  /* ---- 盤面の読み込み ---- */
+  function load(msg){
+    board.fill(0); hands.fill(0);
+    for(var i=0;i<81;i++){
+      var s=msg.board[i];
+      if(s){ board[i]=NAME_TYPE[s.slice(1)] | ((s.charAt(0)==="b"?0:1)<<4); }
+    }
+    ["b","w"].forEach(function(sd,k){
+      for(var ty=1;ty<=7;ty++){
+        hands[k*8+ty]=(msg.hands[sd] && msg.hands[sd][TYPE_NAME[ty]])||0;
+      }
+    });
+    side=msg.side==="b"?0:1;
+    sp=0;
+    recomputeHash();
+  }
+
+  function think(msg){
+    load(msg);
+    var ms=msg.ms||3000;
+    var t0=Date.now();
+    deadline=t0+ms; abort=false; nodes=0;
+    KILL1.fill(0); KILL2.fill(0);
+    for(var hh=0;hh<HIST.length;hh++) HIST[hh]>>=2;
+
+    var roots=[];
+    for(var i=0;i<msg.legal.length;i++){
+      var L=msg.legal[i];
+      var from=L.drop ? 128+NAME_TYPE[L.drop] : L.from;
+      roots.push({ m: from|(L.to<<8)|((L.promote?1:0)<<16), s:0 });
+    }
+    // 同点の時に毎回同じ手にならないよう並びをばらす
+    for(var a=roots.length-1;a>0;a--){ var b=(Math.random()*(a+1))|0; var tmp=roots[a]; roots[a]=roots[b]; roots[b]=tmp; }
+    for(var r0=0;r0<roots.length;r0++){
+      var mm=roots[r0].m, f0=mm&255, t0b=(mm>>8)&255;
+      var q=f0<128 ? board[t0b] : 0;
+      roots[r0].s=(q?VAL[q&15]:0)+(((mm>>16)&1)?200:0);
+    }
+    roots.sort(function(x,y){ return y.s-x.s; });
+
+    var bestMove=roots[0].m, bestScore=0, doneDepth=0;
+    if(roots.length>1){
+      for(var depth=1; depth<=40; depth++){
+        rootDepth=depth;
+        var alpha=-INF, iterBest=0, iterScore=-INF;
+        for(var k=0;k<roots.length;k++){
+          var mv=roots[k].m;
+          make(mv);
+          var sc;
+          if(k===0){
+            sc=-search(depth-1,-INF,-alpha,1,true);
+          } else {
+            sc=-search(depth-1,-alpha-1,-alpha,1,true);
+            if(sc>alpha && !abort) sc=-search(depth-1,-INF,-alpha,1,true);
+          }
+          unmake(mv);
+          if(abort) break;
+          roots[k].s=sc;
+          if(sc>iterScore){ iterScore=sc; iterBest=mv; if(sc>alpha) alpha=sc; }
+        }
+        if(abort){
+          if(iterBest){ bestMove=iterBest; bestScore=iterScore; }
+          break;
+        }
+        bestMove=iterBest; bestScore=iterScore; doneDepth=depth;
+        roots.sort(function(x,y){ return (y.m===bestMove?1e9:y.s)-(x.m===bestMove?1e9:x.s); });
+        if(bestScore>MATE-100 || bestScore<-MATE+100) break;   // 詰みが見えた
+        if(Date.now()-t0>ms*0.55) break;                       // 次の深さには間に合わない
+      }
+    }
+    var bf=bestMove&255;
+    return {
+      from: bf>=128 ? -1 : bf,
+      drop: bf>=128 ? TYPE_NAME[bf-128] : "",
+      to: (bestMove>>8)&255,
+      promote: ((bestMove>>16)&1)===1,
+      score: bestScore, depth: doneDepth, nodes: nodes, ms: Date.now()-t0
+    };
+  }
+
+  if(typeof self!=="undefined"){
+    self.onmessage=function(e){
+      var res=null;
+      try{ res=think(e.data); }catch(err){ res={ error:String(err&&err.message?err.message:err) }; }
+      self.postMessage(res);
+    };
+  }
+}
+
 document.getElementById("sg-start-btn").addEventListener("click", ()=>{ sgSelected=-1; sgDrop=""; sgPromo=null; sgStartGame(); });
 
 document.getElementById("sg-board").addEventListener("click", (e)=>{
@@ -4761,7 +5350,7 @@ function sgRenderActions(data, st){
     label.style.cssText = "font-family:sans-serif;font-size:.85rem;color:var(--cream-dim);";
     label.textContent = npcPid ? "🤖 NPCの強さ:" : "🤖 NPCと対戦:";
     row.appendChild(label);
-    [1,2,3].forEach(lv=>{
+    [1,2,3,4,5].forEach(lv=>{
       const b = document.createElement("button");
       const current = !!npcPid && data.npcLevel===lv;
       b.className = "btn small" + (current ? "" : " ghost");
